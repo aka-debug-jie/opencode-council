@@ -37,7 +37,9 @@ test("coordinator returns an advisory council report without a final recommendat
   }
   assert.match(COORDINATOR_PROMPT, /Do not state a final recommendation/)
   assert.match(COORDINATOR_PROMPT, /Do not call persist_debate_transcript in this sidecar workflow/)
-  assert.match(COORDINATOR_PROMPT, /DEBATE_DISPATCH purpose=<normal\|retry\|formatter-correction>/)
+  assert.match(COORDINATOR_PROMPT, /DEBATE_DISPATCH purpose=normal participant=1 round=1 subagent_type=council-mimo/)
+  assert.match(COORDINATOR_PROMPT, /Never emit angle brackets or alternatives/)
+  assert.doesNotMatch(COORDINATOR_PROMPT, /purpose=<normal\|retry\|formatter-correction>/)
   assert.match(COORDINATOR_PROMPT, /Do not issue a task without this marker/)
   assert.match(COORDINATOR_PROMPT, /Never request position, reasoning, evidence, concerns/)
   assert.doesNotMatch(COORDINATOR_PROMPT, /Continuation mode|effective_max_rounds|Question tool/)
