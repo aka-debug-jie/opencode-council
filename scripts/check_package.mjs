@@ -15,6 +15,7 @@ const expected = [
   "scripts/publish_transcript.py",
   "scripts/render_markdown.mjs",
   "src/debate.ts",
+  "src/limits.ts",
   "src/participants.ts",
   "src/response-formatter.ts",
   "src/task-dispatch-guard.ts",

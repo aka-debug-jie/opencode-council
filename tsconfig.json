@@ -10,11 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": [
-    "src/**/*.ts",
-    "scripts/**/*.ts",
-    "tests/**/*.ts",
-    ".opencode/plugin/**/*.ts",
-    "index.ts"
-  ]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "tests/council.test.ts", ".opencode/plugin/**/*.ts", "index.ts"]
 }
