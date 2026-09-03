@@ -271,11 +271,15 @@ export function buildCoordinatorPrompt(_legacyCommand?: string): string {
 
 Start the three resolved neutral participants concurrently for round 1. For later rounds, resume the same sessions and provide each participant the other two canonical turns from the preceding round. Do not gather extra context, use other tools, or assign asymmetric roles.
 
+Every participant task prompt must begin on its first line with exactly \`[DEBATE_DISPATCH purpose=<normal|retry|formatter-correction> participant=<1|2|3> round=<round> subagent_type=<resolved participant agent>]\`. Pass the same resolved participant agent as the task's \`subagent_type\`; use \`normal\` for each round, \`retry\` only once after a task failure, and \`formatter-correction\` only after a formatter failure. Round 1 normal tasks omit \`task_id\`; later normal tasks, retries, and corrections reuse that participant's saved \`task_id\`. Do not issue a task without this marker.
+
+For round 1, give every participant the delimited original topic and require exactly JSON \`{"turn":"..."}\`. For round 2 and later, give each participant the other two canonical prior turns and require exactly JSON \`{"turn":"...","consensus_reached":true|false,"recommend_stopping":true|false}\`. Never request position, reasoning, evidence, concerns, or any other response shape.
+
 Every participant reply must be validated with format_debate_response before it is stored or forwarded. On any validation failure, send the exact diagnostic back to that same participant using one formatter-correction task marker. Never repair JSON yourself. The runtime guard permits at most ${COUNCIL_LIMITS.maxFormatCorrections} formatter corrections for each participant/round and at most ${COUNCIL_LIMITS.maxTaskDispatches} total participant dispatches; if a task is rejected or fails after its one retry, stop immediately, do not call another model, and persist an abort transcript ending in ## Council Abort.
 
-Use exactly the configured number of rounds. After the final round, immediately print ## Final Synthesis based only on canonical participant turns and the original topic. Never ask for, grant, or run extension rounds.
+Use exactly the configured number of rounds. After the final round, print ## Council Report based only on canonical participant turns and the original topic. Include these sections: Participant findings, Agreements, Disagreements, Risks, Falsification tests, and Unresolved questions. Do not state a final recommendation, choose an option, or present consensus as authority. Do not call persist_debate_transcript in this sidecar workflow; stdout is the report returned to Codex. Never ask for, grant, or run extension rounds.
 
-Persist normal transcripts with persist_debate_transcript. Do not print participant turns in the main session. Participants are read-only and cannot edit, execute shell commands, or use the web.`
+Do not print participant turns in the main session. Participants are read-only and cannot edit, execute shell commands, or use the web.`
 }
 
 export const COORDINATOR_PROMPT = buildCoordinatorPrompt()

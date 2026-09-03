@@ -3,7 +3,7 @@ import test from "node:test"
 import { COUNCIL_LIMITS } from "../src/limits.ts"
 import { parseDebateArguments } from "../src/debate.ts"
 import { limitCanonicalTurn } from "../src/response-formatter.ts"
-import { PARTICIPANT_PERMISSION } from "../index.ts"
+import { COORDINATOR_PROMPT, PARTICIPANT_PERMISSION } from "../index.ts"
 
 test("council rounds are bounded before dispatch", () => {
   assert.deepEqual(parseDebateArguments("architecture choice"), { ok: true, topic: "architecture choice", rounds: 2 })
@@ -29,4 +29,16 @@ test("turn truncation happens only after canonical JSON parsing", () => {
   const limited = JSON.parse(limitCanonicalTurn(canonical)) as { turn: string }
   assert.equal(limited.turn.startsWith("x".repeat(COUNCIL_LIMITS.maxTurnChars)), true)
   assert.match(limited.turn, /Truncated by council safety limit/)
+})
+
+test("coordinator returns an advisory council report without a final recommendation", () => {
+  for (const heading of ["Participant findings", "Agreements", "Disagreements", "Risks", "Falsification tests", "Unresolved questions"]) {
+    assert.match(COORDINATOR_PROMPT, new RegExp(heading))
+  }
+  assert.match(COORDINATOR_PROMPT, /Do not state a final recommendation/)
+  assert.match(COORDINATOR_PROMPT, /Do not call persist_debate_transcript in this sidecar workflow/)
+  assert.match(COORDINATOR_PROMPT, /DEBATE_DISPATCH purpose=<normal\|retry\|formatter-correction>/)
+  assert.match(COORDINATOR_PROMPT, /Do not issue a task without this marker/)
+  assert.match(COORDINATOR_PROMPT, /Never request position, reasoning, evidence, concerns/)
+  assert.doesNotMatch(COORDINATOR_PROMPT, /Continuation mode|effective_max_rounds|Question tool/)
 })
