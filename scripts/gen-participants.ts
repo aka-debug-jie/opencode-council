@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { DEBATE_PARTICIPANTS, type DebateParticipant } from "../src/participants.ts"
+import { COUNCIL_LIMITS } from "../src/limits.ts"
 
 type GenerateOptions = {
   root?: string
@@ -24,6 +25,7 @@ export function renderParticipantAgent(participant: DebateParticipant, body: str
     `description: ${participant.description}`,
     "mode: subagent",
     "hidden: true",
+    `steps: ${COUNCIL_LIMITS.participantSteps}`,
     `model: ${participant.model}`,
     ...(participant.variant === undefined ? [] : [`variant: ${participant.variant}`]),
     "permission:",
@@ -36,10 +38,10 @@ export function renderParticipantAgent(participant: DebateParticipant, body: str
     "  grep: allow",
     "  glob: allow",
     "  lsp: allow",
-    "  webfetch: allow",
-    "  websearch: allow",
+    "  webfetch: deny",
+    "  websearch: deny",
     "  external_directory: deny",
-    "  bash: ask",
+    "  bash: deny",
     "  edit: deny",
     "  question: deny",
     "  task: deny",

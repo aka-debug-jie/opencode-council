@@ -1,21 +1,21 @@
 {
-  "name": "opencode-debate",
-  "version": "2.2.2",
-  "description": "Run structured multi-model debates in OpenCode.",
+  "name": "@aka-debug-jie/opencode-council",
+  "version": "0.1.0",
+  "description": "Run bounded multi-model councils in OpenCode.",
   "license": "MIT",
   "author": "DrTralala <drtralala@outlook.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DrTralala/opencode-debate.git"
+    "url": "git+https://github.com/aka-debug-jie/opencode-council.git"
   },
   "bugs": {
-    "url": "https://github.com/DrTralala/opencode-debate/issues"
+    "url": "https://github.com/aka-debug-jie/opencode-council/issues"
   },
-  "homepage": "https://github.com/DrTralala/opencode-debate#readme",
+  "homepage": "https://github.com/aka-debug-jie/opencode-council#readme",
   "keywords": [
     "opencode",
     "plugin",
-    "debate",
+    "council",
     "llm",
     "multi-agent"
   ],
@@ -30,7 +30,7 @@
     "scripts/render_markdown.mjs"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "restricted"
   },
   "type": "module",
   "main": "./index.ts",
