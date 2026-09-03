@@ -9,6 +9,7 @@ import {
 import { ResponseFormatterPlugin } from "./src/response-formatter.ts"
 import { createTaskDispatchGuard } from "./src/task-dispatch-guard.ts"
 import { PERSIST_DEBATE_TRANSCRIPT_TOOL } from "./src/transcript-persistence.ts"
+import { COUNCIL_LIMITS } from "./src/limits.ts"
 
 const COORDINATOR_PROMPT_TEMPLATE = `You are the Debate agent for this project. Your job is to run \`/debate\` discussions inside the current OpenCode session by directly coordinating participant subagents with the \`task\` tool.
 
@@ -266,12 +267,20 @@ Visibility requirement:
 - Do not create a nested coordinator subagent. You are the coordinator.`
 
 export function buildCoordinatorPrompt(_legacyCommand?: string): string {
-  return COORDINATOR_PROMPT_TEMPLATE
+  return `You are the Council coordinator. Run only the already parsed /council or /debate request.
+
+Start the three resolved neutral participants concurrently for round 1. For later rounds, resume the same sessions and provide each participant the other two canonical turns from the preceding round. Do not gather extra context, use other tools, or assign asymmetric roles.
+
+Every participant reply must be validated with format_debate_response before it is stored or forwarded. On any validation failure, send the exact diagnostic back to that same participant using one formatter-correction task marker. Never repair JSON yourself. The runtime guard permits at most ${COUNCIL_LIMITS.maxFormatCorrections} formatter corrections for each participant/round and at most ${COUNCIL_LIMITS.maxTaskDispatches} total participant dispatches; if a task is rejected or fails after its one retry, stop immediately, do not call another model, and persist an abort transcript ending in ## Council Abort.
+
+Use exactly the configured number of rounds. After the final round, immediately print ## Final Synthesis based only on canonical participant turns and the original topic. Never ask for, grant, or run extension rounds.
+
+Persist normal transcripts with persist_debate_transcript. Do not print participant turns in the main session. Participants are read-only and cannot edit, execute shell commands, or use the web.`
 }
 
 export const COORDINATOR_PROMPT = buildCoordinatorPrompt()
 
-export const PARTICIPANT_PROMPT = `You are a neutral debate participant. Follow the Debate agent's prompt exactly. You may gather context with read, grep, glob, lsp, webfetch, websearch, and shell commands for a higher-quality answer; shell commands remain subject to OpenCode permission approval. Do not access external directories, edit or delete files, spawn subagents, invoke skills, or prompt for user input. Return your response as a single JSON object with a \`turn\` string field containing your debate turn; when the Debate agent asks for status, also include boolean \`consensus_reached\` and \`recommend_stopping\` fields. Set \`consensus_reached: true\` only when the participants' positions have genuinely converged. Set \`recommend_stopping: true\` only when further rounds would not meaningfully change your position. If \`recommend_stopping\` is \`false\` on the final configured round, the coordinator may offer the user a chance to extend the debate by additional rounds. Do not set \`recommend_stopping: true\` merely because the round limit has been reached. Output only the JSON object; do not wrap it in a markdown code fence or add other text.`
+export const PARTICIPANT_PROMPT = `You are a neutral council participant providing an independent second opinion to a stronger main coding model. Be concise; evidence matters more than consensus. Identify questionable assumptions, missed risks, and evidence that could falsify your recommendation. In later rounds, challenge concrete peer claims and preserve unresolved disagreement. Use only read, grep, glob, and lsp when needed. Do not edit, use shell commands, browse the web, spawn subagents, invoke skills, or ask the user questions. Return only the requested JSON object; do not wrap it in a code fence.`
 
 export const PARTICIPANT_PERMISSION = {
   "*": "deny" as const,
@@ -284,10 +293,10 @@ export const PARTICIPANT_PERMISSION = {
   grep: "allow" as const,
   glob: "allow" as const,
   lsp: "allow" as const,
-  webfetch: "allow" as const,
-  websearch: "allow" as const,
+  webfetch: "deny" as const,
+  websearch: "deny" as const,
   external_directory: "deny" as const,
-  bash: "ask" as const,
+  bash: "deny" as const,
   edit: "deny" as const,
   question: "deny" as const,
   task: "deny" as const,
@@ -360,7 +369,7 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
       try {
         await input.client.app.log({
           body: {
-            service: "opencode-debate",
+            service: "opencode-council",
             level: "error",
             message,
           },
@@ -401,7 +410,12 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
 
         config.command.debate = {
           template: "$ARGUMENTS",
-          description: "Run a visible resumable-subagent debate",
+          description: "Run bounded multi-model council",
+          agent: "debate",
+        }
+        config.command.council = {
+          template: "$ARGUMENTS",
+          description: "Run bounded multi-model council",
           agent: "debate",
         }
 
@@ -420,6 +434,7 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
             model: participant.model,
             prompt: PARTICIPANT_PROMPT,
             hidden: true,
+            steps: COUNCIL_LIMITS.participantSteps,
             permission: PARTICIPANT_PERMISSION,
             ...(participant.variant === undefined ? {} : { variant: participant.variant }),
           } as any
@@ -434,7 +449,7 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
 export const server: Plugin = createServer()
 
 const plugin: PluginModule = {
-  id: "opencode-debate",
+  id: "opencode-council",
   server,
 }
 

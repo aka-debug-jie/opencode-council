@@ -1,5 +1,6 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
 import type { Event } from "@opencode-ai/sdk"
+import { COUNCIL_LIMITS } from "./limits.ts"
 
 export const TASK_DISPATCH_MARKER = "DEBATE_DISPATCH"
 
@@ -17,6 +18,7 @@ type TerminalSource = "after" | "event"
 
 export type TaskDispatchGuardState = {
   coordinatorSessions: Set<string>
+  totalDispatches: Map<string, number>
   sessions: Map<string, Map<string, {
     marker: TaskDispatchMarker
     normal?: { status: LifecycleStatus; childSessionID?: string }
@@ -44,6 +46,7 @@ type RoundState = {
   normal?: DispatchRecord
   retry?: DispatchRecord
   correction?: DispatchRecord
+  correctionCount: number
 }
 
 type SessionState = Map<DispatchKey, RoundState>
@@ -230,6 +233,7 @@ function resetCompletedDebate(
   sessions: Map<string, SessionState>,
   participantSubagentTypes: Map<string, Map<number, string>>,
   calls: Map<CallKey, DispatchRecord>,
+  totalDispatches: Map<string, number>,
   sessionID: string,
   participantTypes: Map<number, string>,
 ): void {
@@ -238,6 +242,7 @@ function resetCompletedDebate(
   }
   sessions.delete(sessionID)
   participantSubagentTypes.set(sessionID, participantTypes)
+  totalDispatches.set(sessionID, 0)
   coordinatorSessions.add(sessionID)
   for (const [key, record] of calls) {
     if (record.sessionID === sessionID) calls.delete(key)
@@ -249,6 +254,7 @@ function admit(
   sessions: Map<string, SessionState>,
   participantSubagentTypes: Map<string, Map<number, string>>,
   calls: Map<CallKey, DispatchRecord>,
+  totalDispatches: Map<string, number>,
   input: { sessionID: string; callID: string },
   args: Record<string, unknown>,
 ): void {
@@ -271,6 +277,10 @@ function admit(
     throw error(`${marker.purpose} requires task_id`)
   }
   if (calls.has(callKey(input.sessionID, input.callID))) throw error(`call ${input.callID} is already active`)
+  const dispatched = totalDispatches.get(input.sessionID) ?? 0
+  if (dispatched >= COUNCIL_LIMITS.maxTaskDispatches) {
+    throw error("Council aborted: participant dispatch budget exhausted")
+  }
 
   let session = sessions.get(input.sessionID)
   if (!session) {
@@ -281,7 +291,7 @@ function admit(
   const key = dispatchKey(marker)
   let state = session.get(key)
   if (!state) {
-    state = { marker }
+    state = { marker, correctionCount: 0 }
     session.set(key, state)
   }
 
@@ -346,6 +356,9 @@ function admit(
     if (expectedTaskID(session, marker) !== suppliedTaskID) {
       throw error(`task_id mismatch for formatter correction participant ${marker.participant}, round ${marker.round}`)
     }
+    if (state.correctionCount >= COUNCIL_LIMITS.maxFormatCorrections) {
+      throw error("Council aborted: participant failed response formatting")
+    }
     if (state.correction?.status === "active") {
       throw error("formatter correction is already active")
     }
@@ -358,9 +371,11 @@ function admit(
       childSessionID: suppliedTaskID,
     }
     state.correction = record
+    state.correctionCount++
   }
 
   calls.set(callKey(input.sessionID, input.callID), record)
+  totalDispatches.set(input.sessionID, dispatched + 1)
 }
 
 function complete(
@@ -407,6 +422,7 @@ function observeEvent(
   sessions: Map<string, SessionState>,
   participantSubagentTypes: Map<string, Map<number, string>>,
   calls: Map<CallKey, DispatchRecord>,
+  totalDispatches: Map<string, number>,
   event: Event,
 ): void {
   if (event.type === "session.deleted") {
@@ -414,6 +430,7 @@ function observeEvent(
     sessions.delete(sessionID)
     participantSubagentTypes.delete(sessionID)
     coordinatorSessions.delete(sessionID)
+    totalDispatches.delete(sessionID)
     for (const [callID, record] of calls) {
       if (record.sessionID === sessionID || record.childSessionID === sessionID) calls.delete(callID)
     }
@@ -465,13 +482,14 @@ export function createTaskDispatchGuard(): {
   const sessions = new Map<string, SessionState>()
   const participantSubagentTypes = new Map<string, Map<number, string>>()
   const calls = new Map<CallKey, DispatchRecord>()
+  const totalDispatches = new Map<string, number>()
 
   return {
     hooks: {
       "command.execute.before": async (input, output) => {
-        if (input.command !== "debate") return
+        if (input.command !== "debate" && input.command !== "council") return
         const text = output.parts.find((part) => part.type === "text")?.text
-        if (!text?.startsWith("Run a debate with this parsed request.")) return
+        if (!text?.startsWith("Run a bounded council with this parsed request.")) return
         const participantTypes = resolvedParticipantTypes(text)
         if (participantTypes === undefined) {
           if (text.includes("Resolved participants:")) {
@@ -484,13 +502,14 @@ export function createTaskDispatchGuard(): {
           sessions,
           participantSubagentTypes,
           calls,
+          totalDispatches,
           input.sessionID,
           participantTypes,
         )
       },
       "tool.execute.before": async (input, output) => {
         if (input.tool !== "task") return
-        admit(coordinatorSessions, sessions, participantSubagentTypes, calls, input, output.args as Record<string, unknown>)
+        admit(coordinatorSessions, sessions, participantSubagentTypes, calls, totalDispatches, input, output.args as Record<string, unknown>)
       },
       "tool.execute.after": async (input, output) => {
         if (input.tool !== "task") return
@@ -509,20 +528,22 @@ export function createTaskDispatchGuard(): {
           childID,
         )
       },
-      event: async ({ event }) => observeEvent(coordinatorSessions, sessions, participantSubagentTypes, calls, event),
+      event: async ({ event }) => observeEvent(coordinatorSessions, sessions, participantSubagentTypes, calls, totalDispatches, event),
       dispose: async () => {
         coordinatorSessions.clear()
         sessions.clear()
         participantSubagentTypes.clear()
         calls.clear()
+        totalDispatches.clear()
       },
     },
-    state: { coordinatorSessions, sessions },
+    state: { coordinatorSessions, totalDispatches, sessions },
     clear() {
       coordinatorSessions.clear()
       sessions.clear()
       participantSubagentTypes.clear()
       calls.clear()
+      totalDispatches.clear()
     },
   }
 }

@@ -5,6 +5,7 @@ import {
   PERSIST_DEBATE_TRANSCRIPT_TOOL,
   createTranscriptPersistenceTool,
 } from "./transcript-persistence.ts"
+import { COUNCIL_LIMITS } from "./limits.ts"
 
 export type DebateResponseSchema = "round1" | "round2"
 
@@ -24,6 +25,17 @@ const COORDINATOR_ONLY_TOOLS = [
 
 export function responseFormatterScriptPath(moduleUrl: string = import.meta.url): string {
   return fileURLToPath(new URL("../scripts/format_response.py", moduleUrl))
+}
+
+export function limitCanonicalTurn(canonical: string): string {
+  const parsed: unknown = JSON.parse(canonical)
+  if (typeof parsed !== "object" || parsed === null || typeof (parsed as { turn?: unknown }).turn !== "string") {
+    throw new Error("Formatter returned canonical JSON without a turn string")
+  }
+  const response = parsed as { turn: string }
+  if (response.turn.length <= COUNCIL_LIMITS.maxTurnChars) return canonical
+  response.turn = `${response.turn.slice(0, COUNCIL_LIMITS.maxTurnChars)}\n\n[Truncated by council safety limit]`
+  return JSON.stringify(parsed)
 }
 
 export function runResponseFormatter(
@@ -54,7 +66,7 @@ export function runResponseFormatter(
       diagnostic || `Debate response formatter exited with status ${result.status ?? "unknown"}`,
     )
   }
-  return result.stdout.trimEnd()
+  return limitCanonicalTurn(result.stdout.trimEnd())
 }
 
 export function createResponseFormatterTool(moduleUrl: string = import.meta.url): ToolDefinition {

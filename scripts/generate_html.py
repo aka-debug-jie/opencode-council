@@ -47,7 +47,8 @@ class Transcript:
     rounds: tuple[DebateRound, ...]
     extension_decisions: str | None
     json_parsing_problems: str | None
-    final_synthesis: str
+    final_synthesis: str | None
+    council_abort: str | None
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,8 @@ class RenderedContent:
     rounds: tuple[tuple[str, str, str], ...]
     extension_decisions: str | None
     json_parsing_problems: str | None
-    final_synthesis: str
+    terminal_heading: str
+    terminal_content: str
 
 
 MARKDOWN_HELPER_PATH = Path(__file__).with_name("render_markdown.mjs")
@@ -320,6 +322,7 @@ def parse_transcript(
     rounds: list[DebateRound] = []
     optional: dict[str, str] = {}
     final_synthesis: str | None = None
+    council_abort: str | None = None
     seen_non_round = False
     for section_index, (heading, start, end) in enumerate(section_list):
         round_match = ROUND_RE.fullmatch(heading)
@@ -350,6 +353,13 @@ def parse_transcript(
             if section_index != len(section_list) - 1:
                 raise TranscriptError("Final Synthesis must be the last section")
             final_synthesis = _nonempty("\n".join(body), "Final Synthesis")
+        elif heading == "## Council Abort":
+            seen_non_round = True
+            if council_abort is not None:
+                raise TranscriptError("Transcript contains multiple Council Abort sections")
+            if section_index != len(section_list) - 1:
+                raise TranscriptError("Council Abort must be the last section")
+            council_abort = _nonempty("\n".join(body), "Council Abort")
         else:
             raise TranscriptError(f"Unsupported level-two section: {heading}")
 
@@ -358,8 +368,8 @@ def parse_transcript(
         raise TranscriptError("Transcript round headings must be contiguous from 1")
     if len(rounds) != rounds_completed:
         raise TranscriptError("Rounds completed metadata does not match round sections")
-    if final_synthesis is None:
-        raise TranscriptError("Missing Final Synthesis section")
+    if (final_synthesis is None) == (council_abort is None):
+        raise TranscriptError("Transcript must end with exactly one Final Synthesis or Council Abort section")
 
     date_pattern = DATE_ONLY_RE if date_only else re.compile(
         rf"(?:{LEGACY_DATE_RE.pattern}|{DATE_ONLY_RE.pattern}(?!T))"
@@ -392,6 +402,7 @@ def parse_transcript(
         extension_decisions=optional.get("## Extension Decisions"),
         json_parsing_problems=optional.get("## JSON Parsing Problems"),
         final_synthesis=final_synthesis,
+        council_abort=council_abort,
     )
 
 
@@ -453,7 +464,8 @@ def _render_content(transcript: Transcript) -> RenderedContent:
         source_items.append(transcript.extension_decisions)
     if transcript.json_parsing_problems is not None:
         source_items.append(transcript.json_parsing_problems)
-    source_items.append(transcript.final_synthesis)
+    terminal_heading = "Final Synthesis" if transcript.final_synthesis is not None else "Council Abort"
+    source_items.append(transcript.final_synthesis or transcript.council_abort or "")
 
     rendered = iter(render_markdown_items(source_items))
     rounds = tuple(
@@ -466,12 +478,13 @@ def _render_content(transcript: Transcript) -> RenderedContent:
     json_parsing_problems = (
         next(rendered) if transcript.json_parsing_problems is not None else None
     )
-    final_synthesis = next(rendered)
+    terminal_content = next(rendered)
     return RenderedContent(
         rounds=rounds,  # type: ignore[arg-type]
         extension_decisions=extension_decisions,
         json_parsing_problems=json_parsing_problems,
-        final_synthesis=final_synthesis,
+        terminal_heading=terminal_heading,
+        terminal_content=terminal_content,
     )
 
 
@@ -591,7 +604,7 @@ def render_html(transcript: Transcript) -> str:
 <tbody>{rows}</tbody>
 </table>
 {extensions}{problems}
-<section class="summary-section"><h2>Final Synthesis</h2><div class="markdown-body">{content.final_synthesis}</div></section>
+<section class="summary-section"><h2>{content.terminal_heading}</h2><div class="markdown-body">{content.terminal_content}</div></section>
 </body>
 </html>
 '''
