@@ -1,0 +1,32 @@
+{
+  "status": "source-verified-rubric-awaits-human-review",
+  "papers": [
+    {
+      "id": "spanner",
+      "title": "Spanner: Google's Globally-Distributed Database",
+      "url": "https://research.google.com/archive/spanner-osdi2012.pdf",
+      "pdf_sha256": "8cf30f4b379da5873dc9f7d82595d5cdc402083091cfff0e7beb00fd84473ea5",
+      "text_sha256": "30ec9bee218580856bdc5566ca022c76b2db94e1e7b55cb9e7563c074f31735b",
+      "metadata_endpoint": "https://api.crossref.org/works?query.bibliographic=Spanner%3A+Google%27s+Globally-Distributed+Database&rows=1",
+      "local_text": "papers/spanner.txt"
+    },
+    {
+      "id": "calvin",
+      "title": "Calvin: Fast Distributed Transactions for Partitioned Database Systems",
+      "url": "https://www.cs.umd.edu/~abadi/papers/calvin-sigmod12.pdf",
+      "pdf_sha256": "097cba7ed0b4500ffd78f3544da23c1561770cbf5bb45aeb7ea89faa25ad6924",
+      "text_sha256": "6df3008bbeffd7ccb2373f67379a56dff1d2d56c4321d224205ba12f591adad5",
+      "metadata_endpoint": "https://api.crossref.org/works?query.bibliographic=Calvin%3A+Fast+Distributed+Transactions+for+Partitioned+Database+Systems&rows=1",
+      "local_text": "papers/calvin.txt"
+    },
+    {
+      "id": "coordination",
+      "title": "Coordination Avoidance in Database Systems",
+      "url": "https://www.vldb.org/pvldb/vol8/p185-bailis.pdf",
+      "pdf_sha256": "5ec38019fe24187b985d1db2f36ba7717d191c46c2abb2b792d49f8df6f85cad",
+      "text_sha256": "f27851930538c50c2f5b24746a41ab1b039a4d51284daf281ae3994d6dfd633b",
+      "metadata_endpoint": "https://api.crossref.org/works?query.bibliographic=Coordination+Avoidance+in+Database+Systems&rows=1",
+      "local_text": "papers/coordination.txt"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "task_id": "tenant-events",
+  "status": "draft",
+  "critical_insights": [
+    {"id":"T1","description":"Carry authenticated tenant identity end-to-end and scope record and idempotency keys by tenant; not just by event/order ID.","evidence":"SPEC-1/2/3, TRACE-A"},
+    {"id":"T2","description":"Connection-local tenant context can survive pooling; bind and clear it transactionally or use explicit tenant predicates, with negative isolation tests. Do not assert TRACE-D proves an actual leak.","evidence":"SPEC-2, TRACE-D"},
+    {"id":"T3","description":"Separate check-then-write is racy; database mutation and dedup decision require one transactional uniqueness/locking boundary; acknowledge after durable completion policy.","evidence":"SPEC-4, TRACE-B"},
+    {"id":"T4","description":"Database atomicity does not make billing exactly-once. Preserve ambiguous outcomes, stable external idempotency keys and reconciliation/outbox state; address the 24-hour API retention boundary.","evidence":"SPEC-1/4, TRACE-B"},
+    {"id":"T5","description":"Use version/checkpoint-aware backfill and a reconciliation or fencing strategy; sequential dual writes can diverge or replay stale state.","evidence":"SPEC-5, TRACE-C"},
+    {"id":"T6","description":"Fence or route old workers/messages through a schema epoch; handle sequence ordering of noncommutative operations rather than deduplication alone.","evidence":"SPEC-1/3, TRACE-E"},
+    {"id":"T7","description":"Rollback must retain a usable route and preserve v2-only writes for the required 72 hours; a reader flag alone or a 24-hour destructive drop is insufficient.","evidence":"SPEC-5, TRACE-E"},
+    {"id":"T8","description":"Retention must cover declared replay semantics or specify safe archived tombstone/reconciliation handling; 24-hour dedup pruning conflicts with retries and historical imports.","evidence":"SPEC-1/6"}
+  ],
+  "catastrophic_risks": [
+    {"id":"R1","description":"Cross-tenant data mutation or silent suppression due to unscoped keys/context.","evidence":"SPEC-1/2/3, TRACE-A/D"},
+    {"id":"R2","description":"Duplicate or unresolved charges after crash/timeout and late replay.","evidence":"SPEC-1/4, TRACE-B"},
+    {"id":"R3","description":"Destructive rollback or loss of v2-only writes before the rollback window closes.","evidence":"SPEC-5, TRACE-E"},
+    {"id":"R4","description":"Incorrect order state caused by stale backfill or mixed-version workers processing out-of-order events.","evidence":"TRACE-C/E"}
+  ],
+  "competing_solutions": [
+    "Tenant-by-tenant fenced migration, transactional inbox/outbox and a retained compatibility projection, with bounded pause and reconciliation.",
+    "Versioned change capture plus checkpointed backfill, epoch-aware consumers, and dual read verification before tenant cutover.",
+    "Retain legacy storage as source of truth during the rollback window and build v2 as a verified projection, provided all new operations remain representable."
+  ],
+  "high_value_insights": [
+    "Treat event identity, order sequence, tenant identity and migration epoch as separate dimensions; one dedup key cannot solve all four.",
+    "Identify the semantic mismatch between long replay horizons and short billing idempotency retention, and introduce a quarantined/reconciled replay path rather than blindly replaying effects."
+  ],
+  "success_criteria": [
+    "Presents an executable-in-principle rollout and rollback sequence satisfying tenant isolation, bounded downtime and 72-hour rollback.",
+    "Addresses all four catastrophic risks without prescribing an unsafe workaround; distinguishes demonstrated incidents from possible risks.",
+    "Provides concrete crash/concurrency/backfill/replay falsification schedules and a safe policy for unresolved external effects."
+  ]
+}

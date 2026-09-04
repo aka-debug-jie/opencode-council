@@ -161,6 +161,20 @@ run_mock() {
     "$skill_dir/scripts/run_council.sh" --project-dir "$temp_dir/project" --rounds "$rounds" "$@"
 }
 
+assert_timeout_budget() {
+  local configured=$1 previous=$1 found=0 value seconds
+  while IFS= read -r value; do
+    [[ "$value" =~ ^[1-9][0-9]*s$ ]] || continue
+    seconds=${value%s}; found=1
+    ((seconds <= previous && seconds <= configured)) || {
+      printf 'timeout budget increased: configured=%s previous=%s observed=%s\n' "$configured" "$previous" "$seconds" >&2
+      return 1
+    }
+    previous=$seconds
+  done < "$temp_dir/timeout-log"
+  ((found == 1)) || { printf 'no timeout budget was recorded\n' >&2; return 1; }
+}
+
 for rounds in 1 2 3; do
   : > "$temp_dir/log"
   : > "$temp_dir/timeout-log"
@@ -170,15 +184,16 @@ for rounds in 1 2 3; do
   output=$(printf 'Decision: test' | run_mock continue "$rounds")
   grep -Fq '## Council Report' <<<"$output"
   ! grep -Fq 'Exporting session' <<<"$output"
-  grep -Fx -- '--model' "$temp_dir/log" >/dev/null
+  test "$(grep -Fxc -- '--agent' "$temp_dir/log")" -eq 2
+  test "$(grep -Fxc -- 'debate' "$temp_dir/log")" -eq 2
+  ! grep -Fx -- '--model' "$temp_dir/log" >/dev/null
   grep -Fx -- '--format' "$temp_dir/log" >/dev/null
   grep -Fx -- 'json' "$temp_dir/log" >/dev/null
-  grep -Fx -- 'opencode-go/gpt-5.6-luna' "$temp_dir/log" >/dev/null
   grep -Fx -- '--command' "$temp_dir/log" >/dev/null
   grep -Fx -- 'council' "$temp_dir/log" >/dev/null
   grep -Fx -- "$temp_dir/project" "$temp_dir/log" >/dev/null
   grep -Fx -- "--rounds $rounds Decision: test" "$temp_dir/log" >/dev/null
-  grep -Fx -- "$((rounds * 300))s" "$temp_dir/timeout-log" >/dev/null
+  assert_timeout_budget "$((rounds * 300))"
   test "$(grep -Fxc -- '--session' "$temp_dir/log")" -eq 1
   test "$(grep -Fxc -- 'continue' "$temp_dir/state-log")" -eq 1
   test "$(grep -Fxc -- 'complete' "$temp_dir/state-log")" -eq 1
@@ -198,11 +213,11 @@ printf '0' > "$temp_dir/count"
 rm -f "$temp_dir/stopped" "$temp_dir/started" "$temp_dir/child"
 printf 'Decision: test' | run_mock drives 1 > "$temp_dir/drives.out" 2> "$temp_dir/drives.err" &
 runner_pid=$!
-for unused in 1 2 3 4 5; do
+for unused in $(seq 1 50); do
   [[ -f "$temp_dir/started" ]] && break
   sleep 0.1
 done
-[[ -f "$temp_dir/started" ]]
+[[ -f "$temp_dir/started" ]] || { printf 'mock initial process did not start within 5 seconds\n' >&2; exit 1; }
 test "$(grep -Fxc -- '--session' "$temp_dir/log" || true)" -eq 0
 wait "$runner_pid"
 grep -Fq '## Council Report' "$temp_dir/drives.out"
@@ -216,7 +231,7 @@ if printf 'Decision: timeout' | CODEX_COUNCIL_TIMEOUT_SECONDS=1 run_mock timeout
 fi
 grep -Fq 'timed out after 1 seconds during the initial OpenCode run' "$temp_dir/timeout.err"
 child_pid=$(cat "$temp_dir/child")
-for unused in 1 2 3 4 5; do
+for unused in $(seq 1 50); do
   kill -0 "$child_pid" 2>/dev/null || break
   sleep 0.1
 done

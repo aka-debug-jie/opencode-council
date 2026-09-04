@@ -91,6 +91,15 @@ test("formatter wrapper reports when python3 is unavailable", (t) => {
   )
 })
 
+test("formatter wrapper bounds a hung subprocess without a model retry", (t) => {
+  const bin=mkdtempSync(join(tmpdir(),"council-hung-formatter-"))
+  t.after(()=>rmSync(bin,{recursive:true,force:true}))
+  const fakePython=join(bin,"python3")
+  writeFileSync(fakePython,"#!/bin/sh\nexec /bin/sleep 10\n")
+  chmodSync(fakePython,0o755)
+  assert.throws(()=>runResponseFormatter('{"turn":"valid"}',"round1",{env:{...process.env,PATH:bin},timeoutMs:30}),/ETIMEDOUT/)
+})
+
 test("formatter wrapper invokes python3 directly without a shell", (t) => {
   const root = mkdtempSync(join(tmpdir(), "debate-no-shell-"))
   t.after(() => rmSync(root, { recursive: true, force: true }))

@@ -60,6 +60,7 @@ test("packaged config.yaml preserves the shipped version 2 participant registry"
 
   assert.deepEqual(config, {
     version: 2,
+    coordinator: { model: "opencode-go/gpt-5.6-luna" },
     participants: {
       "council-muse": {
         description: "Neutral Muse council participant",

@@ -89,7 +89,7 @@ capture_opencode() {
   printf -v "$output_var" '%s' "$captured"
 }
 
-if run_logged opencode run --format json --model opencode-go/gpt-5.6-luna --command council --dir "$project_dir" --title "$title" -- "--rounds $rounds $brief"; then
+if run_logged opencode run --format json --agent debate --command council --dir "$project_dir" --title "$title" -- "--rounds $rounds $brief"; then
   :
 else
   initial_status=$?
@@ -128,7 +128,7 @@ while ((SECONDS < deadline)); do
       if ! state_action continue "$COUNCIL_RUN_ID" "$session_id" "$message_id" >/dev/null; then
         abort_run 'Council persistent state rejected coordinator continuation.'
       fi
-      if run_logged env COUNCIL_RESUME=1 opencode run --format json --session "$session_id" --model opencode-go/gpt-5.6-luna --dir "$project_dir" 'Continue the current council from completed tool results. Follow the coordinator instructions and finish the Council Report.'; then
+      if run_logged env COUNCIL_RESUME=1 opencode run --format json --session "$session_id" --agent debate --dir "$project_dir" 'Continue the current council from completed tool results. Follow the coordinator instructions and finish the Council Report.'; then
         :
       else
         continuation_status=$?

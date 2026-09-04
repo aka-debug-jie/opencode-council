@@ -14,7 +14,10 @@ export const FORMAT_DEBATE_RESPONSE_TOOL = "format_debate_response"
 export type RunResponseFormatterOptions = {
   moduleUrl?: string
   env?: NodeJS.ProcessEnv
+  timeoutMs?: number
 }
+
+export class FormatterExecutionError extends Error {}
 
 type PermissionAction = "allow" | "ask" | "deny"
 type PermissionConfiguration = PermissionAction | Record<string, unknown>
@@ -52,23 +55,27 @@ export function runResponseFormatter(
       encoding: "utf8",
       input: response,
       shell: false,
+      timeout: options.timeoutMs ?? 5000,
+      killSignal: "SIGKILL",
       ...(options.env === undefined ? {} : { env: options.env }),
     },
   )
 
   if (result.error) {
     if ("code" in result.error && result.error.code === "ENOENT") {
-      throw new Error("Unable to run debate response formatter: python3 was not found on PATH")
+      throw new FormatterExecutionError("Unable to run debate response formatter: python3 was not found on PATH")
     }
-    throw new Error(`Unable to run debate response formatter: ${result.error.message}`)
+    throw new FormatterExecutionError(`Unable to run debate response formatter: ${result.error.message}`)
   }
   if (result.status !== 0) {
     const diagnostic = result.stderr.trim()
+    if (!diagnostic.startsWith("format_response:")) throw new FormatterExecutionError(diagnostic || `Debate response formatter exited with status ${result.status ?? "unknown"}`)
     throw new Error(
       diagnostic || `Debate response formatter exited with status ${result.status ?? "unknown"}`,
     )
   }
-  return limitCanonicalTurn(result.stdout.trimEnd())
+  try { return limitCanonicalTurn(result.stdout.trimEnd()) }
+  catch (error) { throw new FormatterExecutionError("Formatter returned invalid canonical output: " + (error instanceof Error ? error.message : String(error))) }
 }
 
 export function createResponseFormatterTool(moduleUrl: string = import.meta.url): ToolDefinition {

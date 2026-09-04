@@ -210,13 +210,14 @@ test("retry before failure is forbidden and failure of the sole retry is termina
   await assert.rejects(before(guard, "third", args(1, 1, "retry", "child-1")), /aborted/)
   assert.equal(guard.getState("parent")!.dispatches.length, 2)
 })
-test("empty actual results are failures, and failures without child identity abort", async t => {
+test("completed empty results require format correction, and transport failures without child identity abort", async t => {
   const { guard } = fixture(t)
   await activate(guard)
   await before(guard, "empty", args(1))
   await after(guard, "empty", "   ")
-  assert.equal(guard.getState("parent")!.dispatches[0].status, "failed")
-  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+  assert.equal(guard.getState("parent")!.dispatches[0].status, "completed")
+  await assert.rejects(format(guard, 1), /purpose=formatter-correction participant=1/)
+  await before(guard, "correction", args(1, 1, "formatter-correction", "child-1"))
   const unknown = fixture(t).guard
   await activate(unknown)
   await before(unknown, "first", args(1))

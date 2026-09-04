@@ -4,7 +4,7 @@ import { tool, type Hooks, type Plugin } from "@opencode-ai/plugin"
 import { COUNCIL_LIMITS } from "./limits.ts"
 import { parseDebateArguments } from "./debate.ts"
 import { DEBATE_REGISTRY, type DebateRegistry } from "./participants.ts"
-import { runResponseFormatter } from "./response-formatter.ts"
+import { runResponseFormatter, FormatterExecutionError } from "./response-formatter.ts"
 import { CouncilStateStore, abortMarkdown, abortRun, allValidated, assertLive, digest, type Dispatch, type RunState } from "./council-state.ts"
 import { validateCouncilReport } from "./report.ts"
 
@@ -24,7 +24,7 @@ function taskResult(output: string, metadata?: Record<string, unknown>) {
   const metadataID = metadata?.sessionId ?? metadata?.sessionID
   if (m && metadataID && m[1] !== metadataID) throw new Error("task child session ID mismatch")
   return { taskID: typeof metadataID === "string" ? metadataID : m?.[1],
-    status: m?.[2] === "running" ? "active" : m?.[2] === "completed" && m[3] === "result" && m[4].trim() ? "completed" : "failed",
+    status: m?.[2] === "running" ? "active" : m?.[2] === "completed" && m[3] === "result" ? "completed" : "failed",
     raw: m?.[4].trim() ?? "" } as { taskID?: string; status: Dispatch["status"]; raw: string }
 }
 type Message = { info: { id: string; role: string; finish?: string }; parts: Array<any> }
@@ -138,7 +138,7 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
       if (!parsed.ok || !parsed.topic) { invalidSessions.add(input.sessionID); return }
       const runId = configuredRunId ?? randomUUID()
       const selected = registry.sets[registry.defaultSet]
-      const snapshot = { participants: selected.map(agent => registry.participants.find(p => p.agent === agent)!), sets: { [registry.defaultSet]: [...selected] }, defaultSet: registry.defaultSet }
+      const snapshot = { ...(registry.coordinator ? {coordinator: registry.coordinator} : {}), participants: selected.map(agent => registry.participants.find(p => p.agent === agent)!), sets: { [registry.defaultSet]: [...selected] }, defaultSet: registry.defaultSet }
       const deadlineMs = options.deadlineMs ?? (process.env.COUNCIL_DEADLINE_MS ? Number(process.env.COUNCIL_DEADLINE_MS) : Date.now() + parsed.rounds * 300_000)
       if (!Number.isFinite(deadlineMs) || deadlineMs <= Date.now()) throw new Error("Council deadline expired or invalid")
       store.create({ version: 1, runId, sessionID: input.sessionID, deadlineMs, rounds: parsed.rounds, registry: snapshot,
@@ -232,7 +232,19 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
       })
     },
     "tool.execute.after": async (input, output) => {
-      if (input.tool === "task") await completeTask(input.sessionID, input.callID, output.output, output.metadata)
+      if (input.tool === "task") {
+        await completeTask(input.sessionID, input.callID, output.output, output.metadata)
+        const id = find(input.sessionID)
+        const state = id ? store.read(id) : undefined
+        const record = state?.dispatches.find(d => d.callID === input.callID)
+        if (state?.status === "active" && record?.status === "completed") {
+          // Keep the participant result byte-for-byte intact. Task completion and
+          // answer validity are different states; the model must not infer retry
+          // eligibility by reading malformed/prose participant content.
+          const guidance = `<council_control>Task completed for participant=${record.participant} round=${record.round}. This is NOT a task failure, even if the result is prose or malformed JSON. Next call format_debate_response with {"participant":${record.participant},"round":${record.round}}. Do not use purpose=retry. Only a formatter error can authorize formatter-correction.</council_control>\n`
+          output.output = output.output.replace(/<task_result>/, guidance + "<task_result>")
+        }
+      }
     },
     event: async ({event}) => {
       if (event.type !== "message.part.updated") return
@@ -274,20 +286,26 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
           assertLive(state, context.sessionID)
           const record = state.dispatches.filter(d => d.participant === participant && d.round === round).at(-1)
           if (!record || record.status !== "completed") reject(state, "formatter requires a completed actual task", participant, round)
-          if (record.formatFailed) throw new Error("This result already failed validation; return the diagnostic to the original participant")
+          if (record.formatFailed) reject(state, "This result already failed validation; return the diagnostic to the original participant instead of repeating formatter calls", participant, round)
           const raw = rawResults.get(record.callID)
-          if (!raw || digest(raw) !== record.outputDigest) reject(state, "actual participant evidence unavailable", participant, round)
+          if (raw === undefined || digest(raw) !== record.outputDigest) reject(state, "actual participant evidence unavailable", participant, round)
           let canonical: string
           try {
             // Legacy standalone formatter may extract/normalise old transcripts. Live
             // Council participants must supply actual valid JSON, never repaired by us.
             JSON.parse(raw)
-            canonical = runResponseFormatter(raw, round === 1 ? "round1" : "round2")
+            canonical = runResponseFormatter(raw, round === 1 ? "round1" : "round2", {timeoutMs: Math.max(1, Math.min(5000, state.deadlineMs - Date.now()))})
           }
           catch (error) {
+            if (error instanceof FormatterExecutionError) reject(state, "formatter infrastructure failure: " + error.message, participant, round)
             record.formatFailed = true
-            if (state.dispatches.filter(d => d.participant === participant && d.round === round && d.purpose === "formatter-correction").length >= 2) abortRun(state, "participant exhausted format corrections", participant, round)
-            throw error
+            const corrections = state.dispatches.filter(d => d.participant === participant && d.round === round && d.purpose === "formatter-correction").length
+            const diagnostic = error instanceof Error ? error.message : String(error)
+            if (corrections >= COUNCIL_LIMITS.maxFormatCorrections) {
+              abortRun(state, "participant exhausted format corrections", participant, round)
+              throw new Error(`Council aborted: participant exhausted format corrections (participant=${participant} round=${round}). ${diagnostic}. No further model calls are allowed.`)
+            }
+            throw new Error(`Council format validation failed (participant=${participant} round=${round}): ${diagnostic}\nReturn this diagnostic to the SAME participant with task_id=${record.taskID} and marker [DEBATE_DISPATCH purpose=formatter-correction participant=${participant} round=${round} subagent_type=${record.agent}]. Ask for final valid JSON using existing context, without further research. Do not use purpose=retry. Correction ${corrections + 1}/${COUNCIL_LIMITS.maxFormatCorrections}; all dispatches remain subject to the global budget.`)
           }
           state.validated[participant + ":" + round] = { callID: record.callID, formatterCallID: callID, digest: digest(canonical) }
           canonicalResults.set(k, canonical)

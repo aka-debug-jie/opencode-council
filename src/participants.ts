@@ -17,7 +17,10 @@ export type DebateParticipant = Readonly<{
 
 export type DebateParticipantSets = Readonly<Record<string, readonly string[]>>
 
+export const DEFAULT_COORDINATOR_MODEL = "opencode-go/gpt-5.6-luna"
+
 export type DebateRegistry = Readonly<{
+  coordinator?: Readonly<{ model: string }>
   participants: readonly DebateParticipant[]
   sets: DebateParticipantSets
   defaultSet: DebateSet
@@ -36,6 +39,7 @@ export type ParticipantSetConfig = {
 
 export type ParticipantConfig = {
   version: 2
+  coordinator?: { model: string }
   participants: Record<string, ParticipantConfigEntry>
   sets: Record<string, ParticipantSetConfig>
   defaultSet: string
@@ -75,7 +79,7 @@ export type ParticipantConfigPaths = {
   userPath?: string
 }
 
-const TOP_LEVEL_FIELDS = new Set(["version", "participants", "sets"])
+const TOP_LEVEL_FIELDS = new Set(["version", "coordinator", "participants", "sets"])
 const PARTICIPANT_FIELDS = new Set(["description", "model", "variant"])
 const SET_FIELDS = new Set(["participants", "default"])
 const PACKAGED_CONFIG_PATH = fileURLToPath(new URL("../config.yaml", import.meta.url))
@@ -148,6 +152,15 @@ export function parseParticipantConfig(source: string, configPath: string): Part
   if (!isMapping(value)) invalid(configPath, "$", "expected a mapping")
   assertKnownFields(value, TOP_LEVEL_FIELDS, configPath, "$")
   if (value.version !== 2) invalid(configPath, "version", "unsupported version; expected 2")
+
+  let coordinator: ParticipantConfig["coordinator"]
+  if (Object.hasOwn(value, "coordinator")) {
+    if (!isMapping(value.coordinator)) invalid(configPath, "coordinator", "expected a mapping")
+    assertKnownFields(value.coordinator, new Set(["model"]), configPath, "coordinator")
+    const model = optionalNonEmptyString(value.coordinator.model, configPath, "coordinator.model")
+    if (model === undefined) invalid(configPath, "coordinator.model", "expected a non-empty string")
+    coordinator = { model }
+  }
 
   const rawParticipants = value.participants
   if (!isMapping(rawParticipants)) invalid(configPath, "participants", "expected a mapping")
@@ -243,6 +256,7 @@ export function parseParticipantConfig(source: string, configPath: string): Part
 
   return {
     version: 2,
+    ...(coordinator === undefined ? {} : { coordinator }),
     participants: participantsConfig,
     sets,
     defaultSet: markedDefault ?? setOrder[0],
@@ -260,6 +274,7 @@ function normaliseRegistry(config: ParticipantConfig): DebateRegistry {
     Object.entries(config.sets).map(([name, set]) => [name, Object.freeze([...set.participants])]),
   )
   return Object.freeze({
+    coordinator: Object.freeze(config.coordinator ?? { model: DEFAULT_COORDINATOR_MODEL }),
     participants: Object.freeze(participants),
     sets: Object.freeze(sets),
     defaultSet: config.defaultSet,

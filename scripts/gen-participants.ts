@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { DEBATE_PARTICIPANTS, type DebateParticipant } from "../src/participants.ts"
+import { DEBATE_PARTICIPANTS, DEBATE_REGISTRY, DEFAULT_COORDINATOR_MODEL, type DebateParticipant } from "../src/participants.ts"
 import { COUNCIL_LIMITS } from "../src/limits.ts"
 import { buildCoordinatorPrompt } from "../src/coordinator-prompt.ts"
 
@@ -82,7 +82,7 @@ export function renderCoordinatorAgent(
   ]
   return [
     "---", "description: Coordinates bounded advisory councils", "mode: primary", "hidden: true",
-    "model: opencode-go/gpt-5.6-luna", "permission:", '  "*": "deny"',
+    `model: ${DEBATE_REGISTRY.coordinator?.model ?? DEFAULT_COORDINATOR_MODEL}`, "permission:", '  "*": "deny"',
     "  external_directory: deny", "  question: deny", "  persist_debate_transcript: deny",
     "  format_debate_response: allow", "  task:", ...permissions,
     "---", "", buildCoordinatorPrompt(participants), "",

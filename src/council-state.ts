@@ -56,6 +56,7 @@ function validate(value: unknown, id: string): asserts value is RunState {
     || !["active", "ready", "aborted", "completed"].includes(s.status)
     || !Array.isArray(s.dispatches) || s.dispatches.length > 12
     || !s.registry || !Array.isArray(s.registry.participants) || ![3,4].includes(s.registry.participants.length)
+    || (s.registry.coordinator !== undefined && (!s.registry.coordinator || typeof s.registry.coordinator.model !== "string" || !s.registry.coordinator.model.trim()))
     || !s.validated || typeof s.validated !== "object" || Array.isArray(s.validated)
     || !Number.isInteger(s.continuations) || s.continuations < 0 || s.continuations > 8
     || !Array.isArray(s.continuedMessageIDs) || s.continuedMessageIDs.length !== s.continuations

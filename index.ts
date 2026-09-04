@@ -1,6 +1,7 @@
 import type { Plugin, PluginModule } from "@opencode-ai/plugin"
 import { createDebatePlugin } from "./src/debate.ts"
 import {
+  DEFAULT_COORDINATOR_MODEL,
   DEBATE_PARTICIPANTS,
   loadEffectiveRegistry,
   type DebateParticipant,
@@ -16,7 +17,7 @@ import { buildCoordinatorPrompt } from "./src/coordinator-prompt.ts"
 import { CouncilStateStore, assertLive } from "./src/council-state.ts"
 import { existsSync } from "node:fs"
 
-export const PARTICIPANT_PROMPT = `You are a neutral council participant providing an independent second opinion to a stronger main coding model. Be concise; evidence matters more than consensus. Identify questionable assumptions, missed risks, and evidence that could falsify your recommendation. In later rounds, challenge concrete peer claims and preserve unresolved disagreement. Use only read, grep, glob, and lsp when needed. Do not edit, use shell commands, browse the web, spawn subagents, invoke skills, or ask the user questions. Return only the requested JSON object; do not wrap it in a code fence.`
+export const PARTICIPANT_PROMPT = `You are a neutral council participant providing an independent second opinion to a stronger main coding model. Be concise; evidence matters more than consensus. Identify questionable assumptions, missed risks, and evidence that could falsify your recommendation. In later rounds, challenge concrete peer claims and preserve unresolved disagreement. Use only read, grep, glob, and lsp when needed. Do not edit, use shell commands, browse the web, spawn subagents, invoke skills, or ask the user questions. Return only the requested JSON object; do not wrap it in a code fence. You have at most five model steps, including your final answer: budget file exploration accordingly and reserve the final step for the completed JSON, never a plan to answer later. Ensure all strings are escaped and the JSON object is closed. If asked to correct formatting, reuse your existing context and immediately return final valid JSON without further research. State any unread or incompletely checked evidence as a limitation rather than implying you reviewed it.`
 
 export const PARTICIPANT_PERMISSION = {
   "*": "deny" as const,
@@ -109,7 +110,7 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
         registry = snapshot.registry
       } else if (process.env.COUNCIL_RESUME === "1") throw new Error("Council continuation requires a run ID and safety state")
       const selected = registry.sets[registry.defaultSet]
-      registry = { participants: selected.map(agent => registry.participants.find(p => p.agent === agent)!), sets: { [registry.defaultSet]: selected }, defaultSet: registry.defaultSet }
+      registry = { coordinator: registry.coordinator ?? {model: DEFAULT_COORDINATOR_MODEL}, participants: selected.map(agent => registry.participants.find(p => p.agent === agent)!), sets: { [registry.defaultSet]: selected }, defaultSet: registry.defaultSet }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       try {
@@ -177,7 +178,7 @@ export function createServer(loadRegistry: () => DebateRegistry = loadEffectiveR
         config.agent.debate = {
           description: "Coordinates visible debates using participant subagents with self-contained per-round context",
           mode: "primary",
-          model: "opencode-go/gpt-5.6-luna",
+          model: registry.coordinator!.model,
           prompt: buildCoordinatorPrompt(registry.participants),
           hidden: true,
           permission: coordinatorPermission(registry.participants),

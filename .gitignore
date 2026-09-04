@@ -11,3 +11,5 @@ docs/
 !.env.example
 __pycache__/
 *.py[cod]
+benchmark/tasks/paper-coordination/papers/
+benchmark/local/

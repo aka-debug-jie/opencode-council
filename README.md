@@ -14,6 +14,8 @@ Council 将简短任务交给 OpenCode sidecar：四位中立、只读的 partic
 
 只在你明确说“开个 council”“quick council”“critical council”或使用 `$codex-council` 时调用，不自动接管任务。
 
+独立评测：[CouncilBench-Large 首批配对试验](benchmark/README.md)。目前提供题目、待审核评分草案、隔离执行与 mock 验证；未把模拟结果当作真实性能结论。
+
 ## 工作方式
 
 1. **独立分析**：第一轮向四方并发发送相同任务，不提前共享答案。
@@ -24,7 +26,7 @@ Council 将简短任务交给 OpenCode sidecar：四位中立、只读的 partic
 
 ## 模型与参数
 
-| 职责 | 当前模型 |
+| 职责 | 默认模型（可配置） |
 |---|---|
 | Codex 主任务（sidecar 之外） | 当前会话主模型，例如 Sol；保留最终判断与编码权 |
 | Coordinator | `opencode-go/gpt-5.6-luna` |
@@ -32,6 +34,17 @@ Council 将简短任务交给 OpenCode sidecar：四位中立、只读的 partic
 | Participant 2 | `opencode-go/qwen3.8-flash` |
 | Participant 3 | `opencode-go/glm-5.3-flash` |
 | Participant 4 | `opencode-go/hy4-preview` |
+
+以上 sidecar 模型是默认值，不是固定名单。在有效配置 `~/.config/opencode/opencode-council/config.yaml`（设置了 `XDG_CONFIG_HOME` 时使用对应目录）中修改 `coordinator.model` 或各 `participants.<agent>.model` 即可。保留原有 `version`、participant ID 和 `sets`；例如替换 Coordinator 时编辑这一段：
+
+```yaml
+coordinator:
+  model: opencode-go/gpt-5.6-luna # 换成已配置 provider 下可用的实际模型 ID
+```
+
+旧配置没有 `coordinator` 时仍默认 Luna。Participant 保留可选 `variant`；仅填写对应模型支持的值。新调用加载新配置，已有运行和 continuation 使用原配置快照；runner 通过 `--agent debate` 使用配置中的模型，不再用固定 `--model` 覆盖它。[OpenCode agent 模型配置](https://opencode.ai/docs/agents/#model)
+
+模型必须已在 OpenCode 中配置并有调用权限；不自动安装 provider、切换备用模型或修改凭据。自选模型的工具调用和格式遵循能力需另行验收。更换模型不改变只读权限、轮数或预算。已有用户配置不会自动覆盖；不要为了生效运行 `sync-council-config --apply`，该命令会把配置重置为仓库默认值。
 
 | 模式 | 轮次 | 正常 dispatch | 剩余故障预算 | 整次调用时限 |
 |---|---:|---:|---:|---:|
