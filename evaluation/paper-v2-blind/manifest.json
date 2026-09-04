@@ -1,0 +1,23 @@
+{
+  "version": "0.1",
+  "packet": "method-blinded-public-human-review",
+  "answer_count": 4,
+  "task_ids": [
+    "paper-coordination"
+  ],
+  "reviewed_bundle_sha256": "b3856c7ccf8d89c4908621c5da90e37bdb795f7c59125b9d4c54d3a54f56afa5",
+  "files": {
+    "BLIND_REVIEW_PROTOCOL.zh.md": "8d7954747c35a153ee8e0ee8cf13ed5da75e6936570e61b6f312a1a39e6b3212",
+    "EVALUATION_GUIDE.zh.md": "c1f268fd9ecb16dd8a39c28ba8249589977272c7f0fdba2ddd9ec95950ea8dd4",
+    "README.md": "9e121f73c269b2dfe196645efca6d2038d5e910199ca791f6c6da545ffeee566",
+    "REVIEW_FORM.md": "309792c268f6b3cba9d63d59110963bd2233a82e744aa55a91dbd5fc9a958f1b",
+    "annotations.template.json": "9d3c23cae791669d1e654b7476818befabff3fb46ce23dcf2a35a4e1aa661bed",
+    "answers/answer-08f77485d8c44378.txt": "3fc4f77011838bc3ff1cf601afcb8f64a90d1c8bf9ab76b8ec3f185fbc5433dd",
+    "answers/answer-758e8a2b534143ef.txt": "5deb3e9a735c00165e4df16ab15d68f1b8958c082bb27695220120988df1b555",
+    "answers/answer-9472644f47e94f1b.txt": "f6a796b185ed5b56eeec465fa70bf463354a0eb587e18505dee8797e66a07e04",
+    "answers/answer-c665a7bace734236.txt": "be345b8f5a9725ef6c5a19150e568ebbdc2492894ca0fe990cfe1f25678ec092",
+    "tasks/paper-coordination/rubric.json": "8a1d68168296fb5f592e5990584ebcdcf3f7e2f5e76f7551320953816ca8ee50",
+    "tasks/paper-coordination/sources.json": "20fbd35d242036eaf04eeb4a0ec38d474f5990e151d651198e885a0dd7c4ae01",
+    "tasks/paper-coordination/task.json": "c18efb3ffb1e15496e2c89d50f25c375f44f210608ae46d01d5aeab8cf7b42ce"
+  }
+}

@@ -1,0 +1,26 @@
+## Decision
+
+The papers do not conflict; they answer different questions. The question still open for this service is: **does the un-enumerated invariant residue contain a *global, non-I-confluent* invariant** — the only condition that forces *distributed* coordination rather than localizable per-record coordination? If not, invariant-scoped execution (Paper-3) is safe and hot records are only a throughput cost; if yes, they must default to serializable scheduling (Paper-1/Paper-2). "Is coordination necessary?" is the wrong question.
+
+## Evidence and assumptions
+
+*Published:* Paper-1 enforces external consistency on all transactions via TrueTime+2PC (P1 §4.1.2 p.6–8), urging programmers to accept contention "rather than always coding around the lack of transactions" (§2.3 p.4); F1 multi-site commit ~103 ms with a fat tail from lock conflicts (Table 6 p.12). Paper-2 removes commit-time 2PC by pre-ordering inputs, but still needs a global sequencer and full read/write-set declaration (§1.3, §3.2.1); hot records still serialize, and execution skew degrades high contention (§6.3). Paper-3 proves I-confluence necessary and sufficient (Theorem 1, §4.2 p.189), warns that incomplete invariant specification forces fallback to serializability (§1 p.186; §4.3 p.190), and classifies ">"+decrement non-I-confluent, "+"+increment I-confluent (Table 2, Claims 11/13 p.190); in TPC-C only 2/12 invariants need coordination, confined to one server (§6.1 p.192).
+
+*My inference (not published):* two hidden assumptions create the apparent contradiction. (1) Invariant knowledge is treated as binary — complete (Paper-3) or "not known to the system but embodied in the transaction" (Paper-3 §4.3 quoting classic CC; Paper-1/2's stance). The team sits between. (2) "Coordination" is conflated: Paper-3 shows required coordination can be single-site; Paper-2 shows ordering ≠ 2PC. The team's named invariants (balance≥0, inventory≥0, no double-spend) are *per-record* non-I-confluent, so all three papers agree some coordination is needed — only at the record. Correcting candidate 4: aggregate conservation/sum is likely I-confluent (materialized-view sums, P3 Table 3), unlike a global capacity cap.
+
+## Alternatives
+
+A. Invariant-scoped local coordination (P3 §6.1): atomic increment/decrement of the hot record at commit; remainder via RAMP. Cheap; unsound if an unlisted *global* non-I-confluent invariant exists.
+B. Default serializable (P1/P2): sound regardless; pays commit-wait and hot-record contention (Table 6 tail).
+
+## Failure modes
+
+A silently violates an unlisted global invariant (P3 §4.3). B fails only on cost. Calvin's variant additionally fails on dependent transactions (OLLP restarts, §3.2.1) and skew (§6.3).
+
+## Falsification tests (new proposal)
+
+Offline merge-replay divergence audit. Replay one day of production trace (F1-style history log, P1 §5.4 p.11) through (i) a serializable reference and (ii) a coordination-free merge enforcing only declared invariants; diff final states against declared *and* plausible undeclared invariants (cross-account conservation, aggregate liability cap). Inject adversarial concurrent pairs (double-debit one hot record; a transfer breaching a floor). *Why it works:* I-confluence is state-level, so any non-I-confluent invariant surfaces as a merged state valid under A's checks yet invalid under some candidate; injected probes test suspects even if the trace never exercised them. *Falsifier:* an invariant absent from the battery passes silently — cheapest mitigation is probing the specific suspects. *Cheapest check:* one-day replay, three invariants, injected probes, no deployment. Decision rule: divergences confined to declared per-record invariants → A suffices (B over-pays); scattered undeclared global divergences → B required.
+
+## Open questions
+
+Can completeness be checked mechanically (I-confluence undecidable, P3 §5.3)? Does the team need recency/read-your-transfer, which forces coordination regardless of invariants (P3 §5.3)? Is the aggregate sum I-confluent under their merge operator, or must it be a CRDT counter (P3 §5.2)?

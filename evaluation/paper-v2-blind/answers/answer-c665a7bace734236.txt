@@ -1,0 +1,33 @@
+## Decision
+
+The unresolved question is: **which service operations and invariants genuinely require synchronous cross-partition coordination, and what consistency must reads provide?** Incomplete invariant knowledge makes “coordination-free” unsafe by default; recency requirements may independently force coordination.
+
+## Evidence and assumptions
+
+**Published:** Spanner provides general transactions, 2PL, 2PC over Paxos, globally ordered timestamps, and commit-wait for external consistency (Paper-1, §§2.1, 4.1.2, 4.2.1, pp. 3, 7–8). It is a conservative fit for transfers and zero-oversell guarantees, but WAN coordination can block during partitions.
+
+Calvin avoids distributed commit by globally sequencing inputs and deterministically acquiring locks, but requires advance knowledge of complete read/write sets; dependent transactions need OLLP and rechecking (Paper-2, §§1.3, 3.2–3.2.1, pp. 2, 4–5). Thus it relocates coordination rather than eliminating agreement.
+
+Paper-3’s Theorem 1 says coordination-free, available, convergent execution exists iff the specified operations are I-confluent (Paper-3, §4.2, p. 189). It explicitly warns that incomplete or incorrect invariants justify serializable execution (Paper-3, §5.3, p. 191). Threshold decrements and specific-value uniqueness are non-I-confluent; suitable increments and replica-namespaced IDs can be confluent (Paper-3, §§5.1–5.2, pp. 190–191).
+
+**Inference:** the hidden assumption causing the apparent conflict is that “coordination” has one meaning and that invariant/transaction knowledge is complete. Spanner coordinates execution to guarantee external consistency; Calvin coordinates input order; Paper-3 permits asynchronous merge under a different availability/convergence model.
+
+## Alternatives
+
+1. **Spanner-like baseline:** coordinate every cross-partition transfer and inventory reservation. It works because serializable execution preserves invariants, and commit-wait supplies external consistency. It is falsified operationally if partition-induced unavailability or WAN tail latency violates requirements. Cheapest check: inject a WAN partition in a staging deployment and measure failed/blocked requests.
+
+2. **Scoped coordination (new proposal):** classify operations by invariant. Use mergeable/commutative representations for proven-confluent updates, while synchronizing only balance-decreasing, zero-oversell, uniqueness, or unknown cases. This could work because Paper-3 shows safety depends on invariant-operation combinations, not merely partition overlap. It is falsified by any invariant violation or by frequent residual coordination. Cheapest check: manually review roughly 20 transaction types and replay a week of traces with invariant validation and partition injection.
+
+3. **Calvin-style execution:** require declared access sets and sequence inputs globally. This could reduce commit-time contention for hot records (Paper-2, §§1.1, 3.1–3.2, pp. 2–4). It is falsified by frequent dependent reads, undeclared accesses, or nondeterministic logic. Cheapest check: instrument production-like code to verify declared sets against observed accesses.
+
+## Failure modes
+
+Unknown business invariants can permit double-spends or oversells before asynchronous validation. Replica-namespaced identifiers solve uniqueness only if sequential/global IDs are not requirements (Paper-3, §5.1, p. 190). Strong “read latest” semantics remain unavailable without coordination under partitions (Paper-3, §5.3, p. 191).
+
+## Falsification tests
+
+Treat every unclassified invariant or access pattern as unsafe. A single reproducible invalid merged state falsifies the coordination-free classification; repeated OLLP restarts falsify Calvin suitability for that transaction class.
+
+## Open questions
+
+Are balances and inventory reads required to be fresh? Are sequential IDs essential? Who versions and audits the invariant registry as requirements evolve?

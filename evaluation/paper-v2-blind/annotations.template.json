@@ -1,0 +1,348 @@
+{
+  "annotator": "",
+  "review_type": "",
+  "mock": false,
+  "status_values": [
+    "hit",
+    "partial",
+    "miss"
+  ],
+  "answer_evidence_fields": [
+    "quote",
+    "start_line",
+    "end_line"
+  ],
+  "novel_candidate_fields": [
+    "id",
+    "novel",
+    "grounded",
+    "testable",
+    "counted",
+    "evidence",
+    "source_refs",
+    "rationale",
+    "falsifier",
+    "cheapest_test"
+  ],
+  "audited_claim_fields": [
+    "id",
+    "supported",
+    "evidence",
+    "source_refs",
+    "reason"
+  ],
+  "answers": [
+    {
+      "blind_id": "answer-08f77485d8c44378",
+      "critical": [
+        {
+          "id": "PCI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI3",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI4",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI5",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI6",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI7",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI8",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI9",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI10",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "risks": [
+        {
+          "id": "PRI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI3",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "novel_candidates": [],
+      "claims": [],
+      "task_success": null,
+      "decision_evidence": [],
+      "decisive_failure_evidence": [],
+      "harmful_recommendations": []
+    },
+    {
+      "blind_id": "answer-758e8a2b534143ef",
+      "critical": [
+        {
+          "id": "PCI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI3",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI4",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI5",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI6",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI7",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI8",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI9",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI10",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "risks": [
+        {
+          "id": "PRI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI3",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "novel_candidates": [],
+      "claims": [],
+      "task_success": null,
+      "decision_evidence": [],
+      "decisive_failure_evidence": [],
+      "harmful_recommendations": []
+    },
+    {
+      "blind_id": "answer-9472644f47e94f1b",
+      "critical": [
+        {
+          "id": "PCI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI3",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI4",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI5",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI6",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI7",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI8",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI9",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI10",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "risks": [
+        {
+          "id": "PRI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI3",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "novel_candidates": [],
+      "claims": [],
+      "task_success": null,
+      "decision_evidence": [],
+      "decisive_failure_evidence": [],
+      "harmful_recommendations": []
+    },
+    {
+      "blind_id": "answer-c665a7bace734236",
+      "critical": [
+        {
+          "id": "PCI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI3",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI4",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI5",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI6",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI7",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI8",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI9",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PCI10",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "risks": [
+        {
+          "id": "PRI1",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI2",
+          "status": null,
+          "evidence": []
+        },
+        {
+          "id": "PRI3",
+          "status": null,
+          "evidence": []
+        }
+      ],
+      "novel_candidates": [],
+      "claims": [],
+      "task_success": null,
+      "decision_evidence": [],
+      "decisive_failure_evidence": [],
+      "harmful_recommendations": []
+    }
+  ]
+}
