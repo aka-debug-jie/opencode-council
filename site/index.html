@@ -23,7 +23,7 @@
         <h1>多听三种意见。<br>决定仍在你。</h1>
         <p class="hero-description">给 Codex 一组有边界的第二意见。三位只读顾问独立分析、交叉评阅；主任务保留完整上下文、最终判断与编码权。</p>
         <div class="actions"><a class="button primary" href="#start">开启你的 Council <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council">浏览源码 <span aria-hidden="true">↗</span></a></div>
-        <p class="hero-note">v0.1 · 私有仓库 · 本地 sidecar · 显式调用</p>
+        <p class="hero-note">v0.1 · 公开源码 · 本地 sidecar · 显式调用</p>
       </div>
       <div class="diagram" aria-label="Codex 发送简短任务给 Luna，由 Luna 调度 Muse、Qwen、GLM，返回顾问报告供 Codex 判断">
         <div class="diagram-top"><span class="mono">COUNCIL / SESSION 01</span><span class="status"><span class="dot"></span>有界协作</span></div>
@@ -78,7 +78,7 @@
     </section>
 
     <section id="start" class="section wrap start-section">
-      <div class="start-copy"><p class="eyebrow">05 / BRING YOUR OWN JUDGMENT</p><h2>下一次重要决定，<br>多问三个视角。</h2><p>已有本机安装时，在 Codex 中明确调用 <code>$codex-council</code>。小问题使用 quick，重要选择保留两轮，critical 留给真正需要的任务。</p><a class="button primary" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council#开始使用">阅读完整安装说明 <span aria-hidden="true">↗</span></a><p class="small-note">仓库需要访问权限。当前是私有本地部署，npm 尚未发布；此页面不是在线讨论服务。</p></div>
+      <div class="start-copy"><p class="eyebrow">05 / BRING YOUR OWN JUDGMENT</p><h2>下一次重要决定，<br>多问三个视角。</h2><p>已有本机安装时，在 Codex 中明确调用 <code>$codex-council</code>。小问题使用 quick，重要选择保留两轮，critical 留给真正需要的任务。</p><a class="button primary" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council#开始使用">阅读完整安装说明 <span aria-hidden="true">↗</span></a><p class="small-note">源码公开，运行需自行配置 OpenCode Go。npm 尚未发布；此页面不是在线讨论服务。</p></div>
       <div class="install-card"><div class="terminal-header"><span class="mono">LOCAL CHECKOUT</span><span aria-hidden="true">● ● ●</span></div><pre><code><span class="code-comment"># 先使用 Node 24.15.0 与 Python 3</span>
 npm ci
 sh scripts/verify.sh

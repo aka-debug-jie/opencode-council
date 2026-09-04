@@ -6,7 +6,7 @@
 
 [工作方式](#工作方式) · [模型与参数](#模型与参数) · [验证结果](#验证结果) · [开始使用](#开始使用) · [独立展示页](#展示页) · [致谢与贡献者](#致谢与贡献者)
 
-`v0.1` · 私有仓库 · Linux 本机验收 · MIT · npm 尚未发布
+`v0.1` · 公开源码 · Linux 本机验收 · MIT · npm 尚未发布
 
 Council 将简短任务交给 OpenCode sidecar：三位中立、只读的 participant 独立分析，再对彼此的结果进行交叉评阅。GPT 5.6 Luna 只负责调度与校验；当前 Codex 保留完整上下文、最终判断和后续编码权。
 
@@ -82,7 +82,7 @@ Council 将简短任务交给 OpenCode sidecar：三位中立、只读的 partic
 
 ### 1. 准备 checkout 与环境
 
-需要仓库访问权限、项目级 **Node 24.15.0**、Python 3，以及已配置 OpenCode Go 的 OpenCode。本机验收版本为 OpenCode 1.18.25；不修改主机默认 Node。
+源码可公开克隆；运行需要项目级 **Node 24.15.0**、Python 3，以及已配置 OpenCode Go 的 OpenCode。本机验收版本为 OpenCode 1.18.25；不修改主机默认 Node。
 
 ```bash
 git clone --branch feature/council https://github.com/aka-debug-jie/opencode-council.git
