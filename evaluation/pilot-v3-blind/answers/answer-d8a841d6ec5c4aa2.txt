@@ -1,0 +1,45 @@
+## Decision
+
+Adopt a **per-tenant fenced cutover** with four correctness fixes:
+
+1. Composite idempotency key **(tenant_id, event_id)** for the ledger (TRACE-A).
+2. Explicit tenant predicate (and RLS as defense-in-depth) in every SQL statement — never pooled connection-local session state (TRACE-D, SPEC-2).
+3. Monotonic `last_sequence` guard on all v2 writes; backfill seeds only via `INSERT … ON CONFLICT DO NOTHING`, never overwriting existing rows (TRACE-C/E).
+4. A durable **pending/intent row committed before the billing call**, stable billing key = hash(tenant_id, event_id, operation, sequence), and reconciliation for ambiguous timeouts — never blind retry (TRACE-B).
+
+Keep the ledger ≥45 days (not 24h) and retain v1 read-only ≥72h behind a reverse bridge.
+
+Sequence: add tenant_id to queued payloads and schema epoch to logs; deploy v2 and guarded writers in shadow; backfill per tenant under the ≤60s pause (seed-only); dual-write v1+v2; per-tenant reader flip after shadow comparison; reverse-bridge v2→v1 for v2-only rows; drain/route old messages by payload tenant; drop v1 only after the rollback window and full drain.
+
+## Evidence and assumptions
+
+Evidence: TRACE-A (cross-tenant event_id collision), TRACE-B (duplicate billing attempt, unresolved outcome), TRACE-C (stale backfill overwrite), TRACE-D (pooled connection, tenant not logged), TRACE-E (seq 11 after 12, no epoch). Assumptions (unverified): sequence is strictly increasing and present in payloads; tenant_id can be added to the payload (SPEC-2 lists only event_id/order_id/operation/sequence); billing can be queried during its 24h window.
+
+## Alternatives
+
+**Path A (chosen):** dual-write with v2 authoritative at cutover plus reverse bridge. Works because sequence guards block stale/out-of-order writes and the bridge keeps v2-only rows readable during rollback. Falsified if v1 cannot carry a tenant-tagged overlay for the bridge, or if the busiest tenant exceeds 60s drain.
+
+**Path B:** keep v1 authoritative and expose v2 as a live view/overlay until cutover. Avoids the backfill race entirely but cannot create v2-only rows or merge overlapping numeric IDs without adding a tenant column to v1; it defers rather than solves the merge and still needs the overlay for rollback. Rejected as it leaves the core migration unsolved.
+
+## Failure modes
+
+- Concurrent redelivery: claim via unique `(tenant_id, event_id)` pending row; losers reconcile, never double-bill.
+- Timeout with completed charge: pending state "uncertain"; redelivery queries billing to resolve; after 24h, route to a manual refund/reconciliation queue.
+- Crash after billing, before processed: stable key + pending row prevent a second charge.
+- v2-only rollback: reverse bridge writes a tenant-tagged overlay old readers can see; absent this, v2-only records are lost (TRACE-E).
+- Old epoch-less messages: route by payload tenant, apply sequence guard, quarantine seq < last_sequence.
+
+## Falsification tests (cheapest first)
+
+1. Amber e17 and blue e17 — both must apply.
+2. Kill worker after billing, before processed — one billing attempt, pending recovered.
+3. Backfill racing a cancel — final state cancelled.
+4. Pooled connection reused across tenants — access denied and tenant logged.
+5. Replay seq 11 after 12 — ignored/quarantined.
+6. Restore old readers with a v2-only row — still readable via bridge.
+7. Busiest-tenant drain ≤60s.
+8. Day-45 replay under both candidate billing keys — no duplicate charge.
+
+## Open questions
+
+Does billing resolve outcomes after 24h? Do imports reuse event IDs (changes key derivation)? Are sequences monotone and available in v1? Can old workers retire per tenant? Can v1 host a tenant overlay? Who owns unresolved-charge reconciliation?

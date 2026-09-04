@@ -1,0 +1,37 @@
+## Decision
+
+Adopt **composite-key idempotency, sequence-gated writes, payload-derived tenant, and an intent-first billing ledger with an explicit gap policy**.
+
+- `processed(tenant_id, event_id, state, created_at)`, PK `(tenant_id, event_id)`. `event_id` is unique only per tenant (TRACE-A). Retain ≥45 days (replay horizon), never 24h.
+- `orders_v2(tenant_id, order_id, status, last_sequence)`, PK `(tenant_id, order_id)`. Apply only if `sequence > last_sequence` (or row absent); otherwise acknowledge without effect. This blocks TRACE-E downgrades and preserves non-commutative cancel/reserve.
+- Tenant is read only from the queued payload, never connection-local session state (TRACE-D); log `tenant_id` + `schema_epoch` (SPEC-6).
+- Worker: begin → insert `processed(state='attempting') ON CONFLICT DO NOTHING` (conflict ⇒ already handled, ack) → guarded `orders_v2` update → commit → billing(key `tenant_id:event_id:sequence`) → mark charged → ack. On timeout leave `attempting`, do **not** ack or blindly re-bill. A sweeper may retry within 24h; after 24h any unresolved row is quarantined for manual settlement. This is the only honest treatment of TRACE-B: billing retains keys 24h, offers no query API, yet retries/replays extend to 45 days.
+- Backfill v1→v2 with conditional writes only (`ON CONFLICT DO NOTHING`, or `UPDATE … WHERE last_sequence < snapshot`), never read-then-overwrite (TRACE-C).
+- Rollout: per-tenant drain ≤60s (no global pause); backfill; dual-write **v2 and the tenant's v1** (including v2-first creates); switch readers; keep v1 writable ≥72h (rejecting SPEC-5's 24h drop, which contradicts its own 72h rollback rule); drop v1 only after reconciliation shows zero lag and zero unresolved billing. Rollback re-points readers to v1, which must see v2-first rows via dual-write.
+
+## Evidence and assumptions
+
+Traces map one-to-one: A→composite PK; B→intent-first ledger plus external-gap policy; C→conditional backfill; D→payload tenant; E→sequence guard and retaining v1 through the window. Assumptions: per-order sequence is strictly monotonic; `tenant_id` is in every payload (SPEC-1/2); v1 is tenant-routed (SPEC-5 wording), so v2-first rows can be inserted into the correct tenant's v1; billing dedupes on the caller key for 24h.
+
+## Alternatives
+
+- **Path A (preferred):** intent-first ledger + quarantine. Works because DB state is atomic and the single non-atomic step (billing) is bounded by the 24h key plus manual quarantine. Falsified if billing cannot be reconciled at all (no outcome retrieval ever).
+- **Path B:** demand billing retain and expose keys ≥45 days, replacing manual quarantine with an automatic reconciler. Cleaner but requires a contract change SPEC-4 does not grant; cheapest check is asking/verifying billing retention and queryability.
+- **Path C:** keep v1 authoritative, defer v2-first creates until after the window, then accept forward-only rollback. Workable only if those creates can be deferred; otherwise v2-first rows vanish on rollback (TRACE-E's rollback clause).
+
+## Failure modes
+
+Double charge after billing-key expiry (mitigated by quarantine, not auto-retry); ledger pruned below 45d → replay re-charges; v1 dropped at 24h → rollback broken; backfill clobber; cross-tenant `e17` collision; v2-first rows invisible to old readers if dual-write into v1 is impossible.
+
+## Falsification tests (cheapest first)
+
+1. Amber and blue each send `e17` concurrently → two ledger rows, both orders change.
+2. Commit intent, kill worker before billing, redeliver after 24h → no automatic second charge; row quarantined.
+3. Backfill reads `pending`, concurrent cancel commits, backfill completes → v2 stays `cancelled`.
+4. Deliver seq 11 after 12 → status unchanged.
+5. Reuse one pooled connection amber→blue → every blue statement carries blue `tenant_id`.
+6. Rollback drill: create a v2-first row, re-point readers → old reader sees it.
+
+## Open questions
+
+Does billing retain/query keys beyond 24h (SPEC-4 implies no)? Is v1 genuinely per-tenant, or a single merged numeric-`order_id` table — in which case lossless rollback may be impossible and forward-only must be declared? Exact sequence domain across imports and 45-day replays?

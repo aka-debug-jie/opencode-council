@@ -1,0 +1,29 @@
+## Decision
+
+The unresolved question is not “is coordination necessary?” It is: **which authoritative invariants must hold during partitions, and is external consistency required in addition to invariant preservation?** In particular, is cross-account/ inventory conservation immediate, or is bounded staleness acceptable?
+
+## Evidence and assumptions
+
+**Published claims:** Spanner uses replicated transactions, 2PL/2PC, TrueTime, and commit-wait to provide external consistency (P1, §4.2; availability under failures, §5.2). Calvin orders transactions before execution, enabling deterministic distributed execution without runtime distributed commit (P2, §§2–3), but its ordering layer is itself coordination and can serialize hot records (P2, §4.1). Coordination Avoidance says coordination is unnecessary when all relevant operations are I-confluent for the declared invariants; otherwise coordination is required (P3, §§1–5, pp.185–190).
+
+**Inference:** The apparent conflict hides at least two assumptions: “coordination” is being used both for commit-time synchronization and for advance ordering; and the invariant set is assumed known and complete. Calvin does not establish Spanner-style real-time visibility, while P3 cannot certify safety for an undiscovered cross-record invariant.
+
+## Alternatives
+
+1. **Spanner-style coordination.** Why it could work: it directly supplies atomicity and external consistency for transfers crossing partitions. Falsifier: required availability or latency during quorum loss is unacceptable. Cheapest check: inject a quorum/partition fault and measure whether the service must block.
+
+2. **Calvin-style deterministic ordering.** Why it could work: a known transaction input/order can make cross-partition effects converge without distributed commit. Falsifier: transactions have nondeterministic or unavailable inputs, or hot-key ordering violates the latency SLA. Cheapest check: offline deterministic replay of sampled traces, including reordered and conflicting transfers.
+
+3. **Invariant-specific coordination avoidance (for example, escrow).** Why it could work: bounded inventory/debit rights can be partitioned into local budgets, preserving non-negativity without every operation coordinating (P3, §§3–5). Falsifier: demand exceeds allocated rights, or the true invariant is cross-record conservation that the escrow model does not cover. Cheapest check: two-container partition test with concurrent debits/transfers, then merge and verify every invariant.
+
+## Failure modes
+
+A passing merge test proves only the tested invariants, not completeness. Escrow may preserve per-record floors while violating global conservation. Calvin may preserve serializability while failing real-time read expectations. Spanner may preserve semantics but block during partitions. These are conditional differences, not contradictions.
+
+## Falsification tests
+
+**New proposal:** run one small fault-injection pilot, not a performance benchmark: partition two containers; issue concurrent inventory decrements, account debits, and transfers; record acknowledgements and reads; heal and validate non-negativity, conservation, atomic transfer, and read-your-writes. Replay the identical trace under deterministic ordering and escrow accounting. Divergence specifically distinguishes availability-preserving escrow, order-based Calvin behavior, and blocking Spanner behavior.
+
+## Open questions
+
+Which invariants are authoritative and complete? Must conservation hold immediately? Is external consistency required? What escrow bound and hot-record rate fit the SLA? What is the acceptable behavior when a partition exhausts local rights?

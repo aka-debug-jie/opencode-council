@@ -1,0 +1,39 @@
+## Decision
+
+Reject the supplied rollout. Use tenant-by-tenant, epoch-fenced cutover with **v2 authoritative**, while retaining v1 and a compatibility/read overlay for at least the 72-hour rollback window—and preferably beyond the 45-day replay horizon.
+
+Why it could work: tenant-scoped identity, explicit tenant predicates/RLS, sequence-guarded writes, and durable billing intents address the observed failures. Cheapest falsifiers are the race, connection-reuse, replay, and rollback tests listed below.
+
+Sequence:
+
+1. Add `(tenant_id,event_id)` idempotency identity; include tenant and schema epoch in every queued message. Keep event deduplication separate from the billing-effect key, which should identify `(tenant, order, sequence, operation)` if that represents one business effect.
+2. Stop or fence old workers for one tenant; do not rely on pooled session state. Seed v2 and `last_sequence` using a consistent snapshot plus conditional sequence updates, so stale backfill cannot overwrite newer state.
+3. Drain/pause that tenant for no more than 60 seconds, reconcile v1/v2, then switch its reader and writer epoch to v2. Quarantine old-epoch messages rather than applying them blindly.
+4. Before billing, commit a durable pending-effect row. Call billing with the stable key; on timeout, leave the effect pending and reconcile—never blindly retry. Acknowledge only after the state transition and durable intent are committed; billing completion remains separately reconcilable.
+5. Retain v1, v2, ledgers, pending effects, and old-message handling through rollback and the 45-day replay requirement. Pruning after 24 hours is unsafe.
+
+Rollback is a **forward routing rollback**, not destructive data reversal: restore readers only where v1 can represent the data, keep v2-only records in an overlay, and continue applying through a tenant-aware bridge. If that bridge cannot exist, rollback is not safe.
+
+## Evidence and assumptions
+
+TRACE-A proves global `event_id` deduplication is wrong. TRACE-C proves uncoordinated backfill loses updates. TRACE-B proves database commit plus external billing is not atomic and can duplicate ambiguous attempts. TRACE-D makes session leakage plausible but does not prove it. TRACE-E proves sequence and epoch handling are required.
+
+Assumptions requiring confirmation: sequence monotonicity, meaning of replayed imports, billing outcome-reconciliation capability, and whether old workers can be fenced per tenant.
+
+## Alternatives
+
+A simpler workable path is a tenant-by-tenant hard cutover: pause that tenant, snapshot/backfill, switch atomically, and keep a v2-compatible rollback reader. It minimizes dual-write races but is falsified if any tenant cannot drain within 60 seconds or rollback cannot represent v2-only records.
+
+A parallel dual-write path avoids pauses, but is safe only with conflict-free sequence-conditional writes and reconciliation; TRACE-C shows naive dual-writing is falsified by races.
+
+## Failure modes
+
+Cross-tenant pooled-session state; stale backfill; old workers writing v1; duplicate billing after timeout; late sequence 11 undoing 12; 24-hour pruning defeating seven-day retries/45-day replays; rollback losing v2-only records.
+
+## Falsification tests
+
+Run the council’s seven tests, especially connection reuse with enforced tenant denial, backfill/cancel race, worker kills around billing, day-45 replay, v2-only rollback, and busiest-tenant drain timing. Any failure blocks rollout.
+
+## Open questions
+
+Can billing resolve outcomes after 24 hours? Do imports reuse event IDs? Can v1/bridge represent tenant-tagged and v2-only data? Are sequences available and monotone? Who owns pending-charge reconciliation?

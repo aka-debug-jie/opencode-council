@@ -1,0 +1,33 @@
+{
+  "task_id":"paper-coordination",
+  "status":"draft",
+  "critical_insights":[
+    {"id":"P1","description":"Separate external consistency/serial order from preserving specified application invariants; different guarantees can explain apparent disagreement.","evidence":"Spanner sections 1,4; Coordination Avoidance sections 2-4"},
+    {"id":"P2","description":"TrueTime exposes bounded uncertainty; timestamp selection and waiting are not elimination of replication/transaction coordination.","evidence":"Spanner sections 3,4.1,4.2.1"},
+    {"id":"P3","description":"Calvin moves agreement ahead of execution and deterministic locking reduces contention footprint; it does not make network agreement free.","evidence":"Calvin sections 1.1-1.3,2,3"},
+    {"id":"P4","description":"Recognize Calvin transaction planning/read-write-set and nondeterminism requirements; include their cost when extrapolating to the proposed service.","evidence":"Calvin sections 2,3.2"},
+    {"id":"P5","description":"Coordination-free correctness is conditional on invariant confluence for the specified operations, merge and invariants; not a universal claim for transfers or stock decrements.","evidence":"Coordination Avoidance sections 3,4,5"},
+    {"id":"P6","description":"Do not equate throughput, tail latency and partition-time availability; Calvin explicitly distinguishes its availability usage from CAP availability.","evidence":"Calvin page 1 footnote 1 and section 6; other papers' evaluation sections"},
+    {"id":"P7","description":"A discriminating experiment holds workload, resources and required guarantee fixed while varying contention, cross-partition ratio, network latency and relevant mechanism assumptions; measure correctness as well as performance.","evidence":"Comparative experimental design requirement; no direct three-way comparison is supplied"},
+    {"id":"P8","description":"Make the unresolved issue concrete: which service invariants and transaction classes can avoid coordination, and when remaining coordination becomes the bottleneck; ground a conditional hybrid rather than claiming an already-proven universal winner.","evidence":"Synthesis from the three papers; explicitly a task-level inference"}
+  ],
+  "catastrophic_risks":[
+    {"id":"R1","description":"Treating bounded clock uncertainty as perfect clocks or assuming TrueTime alone replaces agreement.","evidence":"Spanner sections 3-4"},
+    {"id":"R2","description":"Allowing arbitrary stock decrements/transfers to merge without validating relevant invariants, causing oversell or conservation failures.","evidence":"Coordination Avoidance sections 3-5"},
+    {"id":"R3","description":"Claiming the papers directly prove a universal performance winner or equivalent guarantees under every partition/workload.","evidence":"Different system models and experimental conditions; Calvin page 1 footnote 1"}
+  ],
+  "competing_solutions":[
+    "Coordinate all relevant multi-record operations under a sufficiently strong transaction guarantee, accepting its cost.",
+    "Use deterministic preordering for known transaction footprints and explicitly account for sequencing, planning and replication costs.",
+    "Partition transaction classes by proven invariant-confluence conditions, coordinating only classes that need it; validate hybrid boundary semantics."
+  ],
+  "high_value_insights":[
+    "Distinguish moving coordination outside lock-holding intervals from removing the semantic need for coordination.",
+    "Use a correctness-matched factorial microbenchmark to distinguish contention-footprint effects from weaker-guarantee effects."
+  ],
+  "success_criteria":[
+    "Explains the apparent conflict without inventing contradictory experimental results or equating unlike correctness guarantees.",
+    "Grounds at least two mechanisms in accurate paper claims and clearly labels the service-specific hidden assumption and inference.",
+    "Proposes a feasible experiment with competing predictions, safety oracle, controls and a falsification outcome; no catastrophic unsafe claim."
+  ]
+}

@@ -1,0 +1,33 @@
+## Decision
+
+1. Make identity composite `(tenant_id, event_id)` everywhere: ledger PK and billing keys. `processed` becomes `(tenant_id, event_id)` (TRACE-A).
+2. Never use connection-local tenant state. Pass `tenant_id` as an explicit column/parameter in every statement, and log tenant + schema epoch (TRACE-D).
+3. Enforce per-order monotonicity: `UPDATE orders_v2 SET status=?, last_sequence=? WHERE tenant_id=? AND order_id=? AND last_sequence < ?`. Late, duplicate, and 45-day replayed events become no-ops. Retain ledger ≥45 days, not 24h.
+4. Billing via outbox: one DB transaction writes the order update and an outbox row `(tenant_id, event_id, billing_key, state='pending')`. Ack the queue message after that commit; a billing worker calls the API with key `(tenant_id, event_id)` and records `charged/failed/unknown`. Keep billing rows ≥45 days; never auto-prune `unknown`. Resolve `unknown` only via billing reconciliation (TRACE-B).
+5. Migration: tenant-by-tenant cutover (≤60s drain each), dual-write v2 (authoritative) then mirror v1 for v1-existing rows; backfill v1→v2 with `ON CONFLICT DO NOTHING`/sequence guard so stale snapshots never clobber newer v2 (TRACE-C). Keep v1 for the full 72h rollback window — dropping at 24h contradicts SPEC-5, so reject it. Log v2-only rows so rollback can re-inject them into v1 (TRACE-E).
+
+Why it works: composite keys kill cross-tenant collisions; explicit context kills pool leakage; the sequence guard makes processing idempotent independent of ledger retention; the outbox makes the billing intent durable and re-drivable under a stable key, with the queue acked only after our DB durably owns the effect; conditional backfill lets live writes win.
+
+## Evidence and assumptions
+
+TRACE-A→(1); TRACE-B→(4) (crash after commit leaves a `pending` outbox; timeout leaves `unknown`, not silently recharged); TRACE-C→(5); TRACE-D→(2); TRACE-E→(3)+(5) (epoch absence is harmless because the sequence guard, not epoch, rejects the stale cancel). Assumed: billing offers a reconciliation query for expired keys; sequence is strictly increasing per order; unknown until confirmed.
+
+## Alternatives
+
+Path B: drop the ledger and rely solely on `last_sequence` idempotency plus a small billing-outcome table. Cheaper storage and no pruning debate, but it silently mis-processes events with reset/missing sequences and loses a global "already seen" signal. Path A (preferred) keeps the ledger as an independent second guard at modest cost.
+
+## Failure modes
+
+Ledger pruned <45 days → replayed event re-bills after the billing key expires. Backfill overwrites newer v2 if the guard is omitted. v1 dropped at 24h → rollback cannot restore v2-only rows. A `unknown` outbox row auto-retried after 24h → double charge. Session-state tenant leak under pool reuse.
+
+## Falsification tests (cheapest first)
+
+1. Insert the same `event_id` for amber and blue; redeliver both; assert both apply once (falsifies composite key if the second is skipped).
+2. Concurrent backfill read + live cancel; assert final v2 = cancelled (falsifies if pending wins).
+3. Reuse one pooled connection for tenant A then B; assert no cross-tenant rows (falsifies explicit context).
+4. Kill a worker after DB commit but before billing; recover; assert exactly one billing call with the same key (falsifies outbox).
+5. Deliver seq 11 after seq 12 with no epoch; assert no-op and v1/v2 agree after rollback (falsifies the sequence guard/rollback).
+
+## Open questions
+
+Does billing expose a reconciliation endpoint once a key expires, or must `unknown` outcomes be manual? Are sequences guaranteed non-resetting across the 45-day import window? Do approved historical imports use fresh sequences? These decide whether ledger-only or sequence-only idempotency is sufficient.

@@ -1,0 +1,28 @@
+{
+  "version": "0.1",
+  "packet": "method-blinded-public-human-review",
+  "answer_count": 8,
+  "task_ids": [
+    "paper-coordination",
+    "tenant-events"
+  ],
+  "reviewed_bundle_sha256": "e4e81b68188e7dd22ae259f411b0d699718da7b66d2448a378b57b49b06e2034",
+  "files": {
+    "README.md": "bfee636bb1326387cfb22cf268dce66de081891da6bbc4f0641bacee785e4c31",
+    "REVIEW_FORM.md": "6c61bede544c2f2d6844e3a852aeba0a348a48be7211cb589d93a26960b30e8b",
+    "annotations.template.json": "72341998b65f562efe9ba5338f419e1d60e3347db7e6ad750432da7bd89272bc",
+    "answers/answer-0083951f9e7c4af1.txt": "7bc31b757871c81676a7c804227f427e5e505eb98dfbbe5ea5424ec7120aed8d",
+    "answers/answer-0dbd34aafefa483b.txt": "295a2b71ae35f36f52d818f5ec6b68b0229c4b8fd0652211b3bdf9d5eddbbbc6",
+    "answers/answer-1b00ef6f0c9a4e8e.txt": "84393add8c489d33569360efd1bcb5f70ed5a22408127d241c751e5ea345eb7c",
+    "answers/answer-3088d995778f4382.txt": "ce89bc3f669c89931df20d3f302b563b1cbe1d123fe3c185550c420dbe6446c1",
+    "answers/answer-36727222891a405f.txt": "b0c435999fcff1a48743dfe0af5d49975754973eec27ca82fed0f883ea5ec8a3",
+    "answers/answer-9244f942a32c4dfc.txt": "5d88808cfad19416307763d05081983d72d8e28d0965630297e473885f60c0dd",
+    "answers/answer-bd9d708b66754656.txt": "4fdf8dc2b295fbc593a37dbcd825c0a09ec27ad4475c8f7831e55631694e4be9",
+    "answers/answer-d8a841d6ec5c4aa2.txt": "84078fc20382e13e045da2f96c7165b7146dff073adcf821a6b0fde6b6b4bc16",
+    "tasks/paper-coordination/rubric.json": "aa3d36dc03c83dac2481e95c2f6ec98fe1ac556fbf78e590346ee80b9069046b",
+    "tasks/paper-coordination/sources.json": "20fbd35d242036eaf04eeb4a0ec38d474f5990e151d651198e885a0dd7c4ae01",
+    "tasks/paper-coordination/task.json": "bbd890ec0674ea61a95d998146481e8b47c393a8f10c62461dfaee5e72b2fa64",
+    "tasks/tenant-events/rubric.json": "630415b5117a3d77d8f3f8e892390ee59c9dfe79df45dc9aad483c025af3d97d",
+    "tasks/tenant-events/task.json": "4067728b0594e7f4b34c39b3f4b0e0260ca00d4cdc57868f7f61067a64e40faa"
+  }
+}
