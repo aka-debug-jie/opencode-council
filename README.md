@@ -4,7 +4,7 @@
 
 **给 Codex 一组有边界的第二意见。三方讨论，主任务做最终判断。**
 
-[工作方式](#工作方式) · [模型与参数](#模型与参数) · [验证结果](#验证结果) · [开始使用](#开始使用) · [独立展示页](#展示页)
+[工作方式](#工作方式) · [模型与参数](#模型与参数) · [验证结果](#验证结果) · [开始使用](#开始使用) · [独立展示页](#展示页) · [致谢与贡献者](#致谢与贡献者)
 
 `v0.1` · 私有仓库 · Linux 本机验收 · MIT · npm 尚未发布
 
@@ -151,3 +151,16 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory site
 ## 来源与许可
 
 基于 [DrTralala/opencode-debate v2.2.2](https://github.com/DrTralala/opencode-debate/tree/v2.2.2) 定制，保留原作者归属与 [MIT 许可](LICENSE)。保留上游 remote 与基线 tag，不覆盖基线分支。旧 transcript 工具作为独立兼容模块继续测试；`docs/` 下的讨论内容不纳入版本控制。
+
+## 致谢与贡献者
+
+特别感谢 **[DrTralala](https://github.com/DrTralala)** 创建并以 MIT 许可开放 [opencode-debate](https://github.com/DrTralala/opencode-debate)。原项目的多模型讨论、participant 编排与结构化响应处理，为 OpenCode Council 提供了基础。我们在此之上定制了 Codex sidecar、有界运行状态和顾问报告工作流，并尊重、保留上游的作者与许可归属。
+
+| 贡献者 | 贡献与角色 |
+|---|---|
+| [DrTralala / Trevor Leong](https://github.com/DrTralala) | 上游原作者；通过 `opencode-debate v2.2.2` 为本项目提供原始实现与设计基础 |
+| [aka-debug-jie](https://github.com/aka-debug-jie) | `opencode-council` fork 维护者；负责定制、集成与维护 |
+
+Thank you, DrTralala, for building and sharing the foundation this project builds on.
+
+完整归属见 [CONTRIBUTORS.md](CONTRIBUTORS.md)。列入上游贡献者是对来源工作的致谢，不表示对方参与本 fork 的维护或为其背书。

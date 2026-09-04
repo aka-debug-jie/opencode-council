@@ -27,5 +27,11 @@ test("package metadata ships runtime data files and declares the YAML runtime de
 
   assert.equal(packageJson.files.includes("config.yaml"), true)
   assert.equal(packageJson.files.includes("scripts/format_response.py"), true)
+  assert.equal(packageJson.files.includes("CONTRIBUTORS.md"), true)
+  assert.equal(packageJson.author, "DrTralala <drtralala@outlook.com>")
+  assert.deepEqual(packageJson.contributors, [
+    {name:"DrTralala",url:"https://github.com/DrTralala"},
+    {name:"aka-debug-jie",url:"https://github.com/aka-debug-jie"},
+  ])
   assert.equal(packageJson.dependencies.yaml, "2.9.0")
 })

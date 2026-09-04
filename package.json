@@ -4,6 +4,10 @@
   "description": "Run bounded multi-model councils in OpenCode.",
   "license": "MIT",
   "author": "DrTralala <drtralala@outlook.com>",
+  "contributors": [
+    { "name": "DrTralala", "url": "https://github.com/DrTralala" },
+    { "name": "aka-debug-jie", "url": "https://github.com/aka-debug-jie" }
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aka-debug-jie/opencode-council.git"
@@ -20,6 +24,7 @@
     "multi-agent"
   ],
   "files": [
+    "CONTRIBUTORS.md",
     "config.yaml",
     "index.ts",
     "src/",

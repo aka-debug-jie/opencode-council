@@ -5,6 +5,7 @@ import process from "node:process"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 const expected = [
+  "CONTRIBUTORS.md",
   "LICENSE",
   "README.md",
   "config.yaml",
