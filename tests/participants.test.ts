@@ -73,11 +73,15 @@ test("packaged config.yaml preserves the shipped version 2 participant registry"
         description: "Neutral GLM council participant",
         model: "opencode-go/glm-5.3-flash",
       },
+      "council-hy4": {
+        description: "Neutral HY4 council participant",
+        model: "opencode-go/hy4-preview",
+      },
     },
     sets: {
       council: {
         default: "yes",
-        participants: ["council-muse", "council-qwen", "council-glm"],
+        participants: ["council-muse", "council-qwen", "council-glm", "council-hy4"],
       },
     },
   })
@@ -85,8 +89,8 @@ test("packaged config.yaml preserves the shipped version 2 participant registry"
 
 test("packaged compatibility exports are loaded from config.yaml", () => {
   assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["council"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm"])
-  assert.equal(DEBATE_PARTICIPANTS.length, 3)
+  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm", "council-hy4"])
+  assert.equal(DEBATE_PARTICIPANTS.length, 4)
 })
 
 test("description and variant are optional source fields", () => {
@@ -169,10 +173,10 @@ test("a complete config requires every participant model", () => {
   )
 })
 
-test("a set requires exactly three distinct known participants", () => {
+test("a set requires three or four distinct known participants", () => {
   for (const [participants, field, reason] of [
-    ["[one, two]", "sets.alpha.participants", /exactly three/i],
-    ["[one, two, three, unused]", "sets.alpha.participants", /exactly three/i],
+    ["[one, two]", "sets.alpha.participants", /three or four/i],
+    ["[one, two, three, unused, five]", "sets.alpha.participants", /three or four/i],
     ["[one, one, two]", "sets.alpha.participants", /distinct/i],
     ["[one, two, missing]", "sets.alpha.participants[2]", /unknown participant/i],
   ] as const) {
@@ -182,6 +186,13 @@ test("a set requires exactly three distinct known participants", () => {
       reason,
     )
   }
+})
+
+test("four-person config is accepted without breaking legacy three-person config", () => {
+  const legacy=parseParticipantConfig(completeConfig(),"/tmp/config.yaml")
+  const four=parseParticipantConfig(completeConfig("\n  alpha:\n    participants: [one, two, three, unused]\n"),"/tmp/config.yaml")
+  assert.equal(legacy.sets.alpha.participants.length,3)
+  assert.equal(four.sets.alpha.participants.length,4)
 })
 
 test("set participant IDs must be non-empty strings", () => {

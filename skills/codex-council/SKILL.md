@@ -13,7 +13,7 @@ Use only for an explicit council request. Do not invoke automatically or delegat
 4. Treat stdout as advisory Council Report. If the runner fails, report the exact concise error and continue the main task without a council result; do not retry automatically.
 5. State the final decision yourself. Explicitly assess disagreement, minority views, falsification tests, and risks missed by the current hypothesis before continuing the original task.
 
-The sidecar coordinator is GPT 5.6 Luna and has no authority to make the final recommendation. Muse Spark 1.3 Contributor, Qwen 3.8 Flash, and GLM 5.3 Flash are the three read-only participants. HY4 Preview is a reserve rotation candidate, not a fourth participant. The runner allows 300 seconds per configured round unless `CODEX_COUNCIL_TIMEOUT_SECONDS` explicitly overrides it.
+The sidecar coordinator is GPT 5.6 Luna and has no authority to make the final recommendation. Muse Spark 1.3 Contributor, Qwen 3.8 Flash, GLM 5.3 Flash, and HY4 Preview (`opencode-go/hy4-preview`) are the four default read-only participants. HY4 is active participant 4, not a reserve. Quick, ordinary, and critical require 4, 8, and 12 normal participant dispatches, leaving 8, 4, and 0 for retries or corrections within the shared 12-dispatch cap. Critical has no spare dispatch budget. The runner allows 300 seconds per configured round (300 / 600 / 900 seconds) unless `CODEX_COUNCIL_TIMEOUT_SECONDS` explicitly overrides it.
 
 The repository copy of this skill is the maintained source. Install it with `python3 scripts/install-council-skill.py` from the opencode-council checkout; use `--check` to compare installed managed files without writing. The installer leaves unrelated files and configuration alone.
 

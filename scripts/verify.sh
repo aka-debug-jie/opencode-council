@@ -19,6 +19,7 @@ grep -Fq 'docs/' .gitignore || fail "transcripts must be ignored"
 grep -Fq 'council-muse' config.yaml || fail "missing Muse participant"
 grep -Fq 'council-qwen' config.yaml || fail "missing Qwen participant"
 grep -Fq 'council-glm' config.yaml || fail "missing GLM participant"
+grep -Fq 'council-hy4' config.yaml || fail "missing HY4 participant"
 
 node scripts/gen-participants.ts --check || fail "generated participant agents are stale"
 npm test || fail "Node regression tests failed"

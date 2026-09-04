@@ -204,20 +204,20 @@ test("coordinator uses concrete configured markers and independent concurrent fi
     assert.ok(prompt.includes("[DEBATE_DISPATCH purpose=normal participant=" + (index + 1) + " round=1 subagent_type=" + participant.agent + "]"))
   }
   assert.doesNotMatch(prompt, /subagent_type=<|subagent_type=one\]/)
-  assert.match(prompt, /all three task calls in one response as a concurrent batch/)
+  assert.match(prompt, /all 3 task calls in one response as a concurrent batch/)
   assert.match(prompt, /same original delimited topic and no peer answers/)
 })
 
 test("coordinator preserves session continuity and canonical-only round transitions", () => {
   assert.match(COORDINATOR_PROMPT, /Round 1 normal tasks omit task_id/)
   assert.match(COORDINATOR_PROMPT, /Later normal tasks, retries, and formatter-correction tasks reuse that same participant task_id/)
-  assert.match(COORDINATOR_PROMPT, /Do not advance to the next round until all three current turns are canonical/)
-  assert.match(COORDINATOR_PROMPT, /other two exact canonical previous-round turns/)
-  assert.match(COORDINATOR_PROMPT, /Wait for all three task results in a round/)
+  assert.match(COORDINATOR_PROMPT, /Do not advance to the next round until all 4 current turns are canonical/)
+  assert.match(COORDINATOR_PROMPT, /other 3 exact canonical previous-round turns/)
+  assert.match(COORDINATOR_PROMPT, /Wait for all 4 task results in a round/)
 })
 
 test("coordinator binds formatting to actual results, never self-repairs, and caps corrections", () => {
-  assert.ok(COORDINATOR_PROMPT.includes("using ONLY {participant:1|2|3,round:N}"))
+  assert.ok(COORDINATOR_PROMPT.includes("using ONLY {participant:1|2|3|4,round:N}"))
   assert.match(COORDINATOR_PROMPT, /runtime reads the actual task result/)
   assert.match(COORDINATOR_PROMPT, /Do not pass a response string/)
   assert.match(COORDINATOR_PROMPT, /Never repair JSON yourself/)

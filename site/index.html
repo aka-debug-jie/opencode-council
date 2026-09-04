@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="opencode-council：为 Codex 增加有边界的三模型第二意见。独立分析、交叉评阅，最终判断留给主任务。">
+  <meta name="description" content="opencode-council：为 Codex 增加有边界的四模型第二意见。独立分析、交叉评阅，最终判断留给主任务。">
   <meta name="color-scheme" content="light">
-  <title>OpenCode Council — 三种意见，一个更充分的判断</title>
+  <title>OpenCode Council — 四种意见，一个更充分的判断</title>
   <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
@@ -19,48 +19,49 @@
   <main id="main">
     <section class="hero wrap">
       <div class="hero-copy">
-        <div class="eyebrow"><span class="dot"></span> THREE PERSPECTIVES. BOUNDED BY DESIGN.</div>
-        <h1>多听三种意见。<br>决定仍在你。</h1>
-        <p class="hero-description">为使用 Sol 等大模型的 Codex 主任务，配上一组有边界的第二意见。三位只读顾问独立分析、交叉评阅；完整上下文、最终判断与编码权始终留在主任务。</p>
+        <div class="eyebrow"><span class="dot"></span> FOUR PERSPECTIVES. BOUNDED BY DESIGN.</div>
+        <h1>多听四种意见。<br>决定仍在你。</h1>
+        <p class="hero-description">为使用 Sol 等大模型的 Codex 主任务，配上一组有边界的第二意见。四位只读顾问独立分析、交叉评阅；完整上下文、最终判断与编码权始终留在主任务。</p>
         <div class="actions"><a class="button primary" href="#start">开启你的 Council <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council">浏览源码 <span aria-hidden="true">↗</span></a></div>
         <p class="hero-note">v0.1 · 公开源码 · 本地 sidecar · 显式调用</p>
       </div>
-      <div class="diagram" aria-label="Codex 主会话使用 Sol 等大模型，将简短任务交给独立的 OpenCode Luna 协调层；Muse、Qwen、GLM 讨论后返回报告，由 Codex 主模型最终判断和实施。Sol 是主模型示例，不是插件固定配置。">
+      <div class="diagram" aria-label="Codex 主会话使用 Sol 等大模型，将简短任务交给独立的 OpenCode Luna 协调层；Muse、Qwen、GLM、HY4 四位只读顾问讨论后返回报告，由 Codex 主模型最终判断和实施。Sol 是主模型示例，不是插件固定配置。">
         <div class="diagram-top"><span class="mono">COUNCIL / SESSION 01</span><span class="status"><span class="dot"></span>有界协作</span></div>
         <div class="lead-node"><span class="node-symbol">◎</span><div><strong>Codex 主任务</strong><span class="main-model">Sol 等大模型</span><span>完整上下文 · 最终判断 · 编码实施</span></div><span class="node-badge">MAIN</span></div>
         <div class="connector"><span>Council Brief · ≤ 16,000 字符</span></div>
         <div class="coordinator-node"><span class="mono">OPENCODE SIDECAR / COORDINATOR</span><strong>GPT 5.6 Luna</strong><span>调度与校验，不代替主模型决策</span></div>
-        <div class="branches" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="branches" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         <div class="participant-grid">
           <div class="participant"><span class="agent-number">01</span><strong>Muse</strong><span>Spark 1.3<br>Contributor</span></div>
           <div class="participant"><span class="agent-number">02</span><strong>Qwen</strong><span>3.8 Flash<br>独立意见</span></div>
           <div class="participant"><span class="agent-number">03</span><strong>GLM</strong><span>5.3 Flash<br>独立意见</span></div>
+          <div class="participant"><span class="agent-number">04</span><strong>HY4</strong><span>Preview<br>独立意见</span></div>
         </div>
         <div class="return-path"><span aria-hidden="true">↳</span><span>顾问报告 → Codex 主模型判断 → 继续实施</span></div>
         <p class="model-note">Sol 为主模型示例，以当前 Codex 会话为准；Council 不替换主模型。</p>
-        <div class="diagram-bottom"><span>READ-ONLY PARTICIPANTS</span><span>HY4 Preview 仅备用</span></div>
+        <div class="diagram-bottom"><span>4 READ-ONLY PARTICIPANTS</span><span>HY4 Preview 正式参与</span></div>
       </div>
     </section>
-    <div class="metric-band wrap" aria-label="核心限制"><div><strong>3</strong><span>固定活跃顾问</span></div><div><strong>2<span>轮</span></strong><span>默认独立分析 + 交叉评阅</span></div><div><strong>12<span>次</span></strong><span>共享 participant dispatch 上限</span></div><div><strong>0</strong><span>participant 编辑权限</span></div></div>
+    <div class="metric-band wrap" aria-label="核心限制"><div><strong>4</strong><span>默认活跃顾问</span></div><div><strong>2<span>轮</span></strong><span>默认独立分析 + 交叉评阅</span></div><div><strong>12<span>次</span></strong><span>共享 participant dispatch 上限</span></div><div><strong>0</strong><span>participant 编辑权限</span></div></div>
 
     <section id="workflow" class="section wrap">
       <div class="section-heading"><div><p class="eyebrow">01 / THE WORKFLOW</p><h2>不是多数表决，<br>是把不同意见看清楚。</h2></div><p>只在你明确要求时启动。讨论提供证据，不把共识当成正确答案。</p></div>
       <div class="steps">
-        <article><div class="step-top"><span>01</span><span aria-hidden="true">↗</span></div><h3>独立分析</h3><p>第一轮使用相同任务输入，并发启动三方。不提前共享答案，不预设拥护者或反对者。</p><span class="step-label">INDEPENDENT FIRST</span></article>
-        <article><div class="step-top"><span>02</span><span aria-hidden="true">⇄</span></div><h3>交叉评阅</h3><p>第二轮起，复用原子会话。运行时注入另外两方上一轮的已验证原文，逐项挑战与修正。</p><span class="step-label">EVIDENCE, NOT ECHOES</span></article>
+        <article><div class="step-top"><span>01</span><span aria-hidden="true">↗</span></div><h3>独立分析</h3><p>第一轮使用相同任务输入，并发启动四方。不提前共享答案，不预设拥护者或反对者。</p><span class="step-label">INDEPENDENT FIRST</span></article>
+        <article><div class="step-top"><span>02</span><span aria-hidden="true">⇄</span></div><h3>交叉评阅</h3><p>第二轮起，复用原子会话。运行时注入另外三方上一轮的已验证原文，逐项挑战与修正。</p><span class="step-label">EVIDENCE, NOT ECHOES</span></article>
         <article><div class="step-top"><span>03</span><span aria-hidden="true">◎</span></div><h3>Codex 主模型做判断</h3><p>六节报告返回主会话。Sol 等主模型结合完整上下文审视少数意见、作出最终判断，再继续编码与实施。</p><span class="step-label">ADVICE, NOT AUTHORITY</span></article>
       </div>
     </section>
 
     <section id="parameters" class="parameters section">
       <div class="wrap parameter-layout">
-        <div><p class="eyebrow">02 / CHOOSE THE DEPTH</p><h2>选择讨论深度。<br>边界始终清楚。</h2><p class="section-intro">小问题快速求证，重要决策充分对照。三种模式使用同一组顾问与安全限制。</p><div class="mode-tabs" role="tablist" aria-label="讨论模式"><button id="tab-quick" role="tab" aria-selected="false" aria-controls="mode-panel" tabindex="-1" data-mode="quick">Quick</button><button id="tab-normal" role="tab" aria-selected="true" aria-controls="mode-panel" data-mode="normal">默认 <span>2 轮</span></button><button id="tab-critical" role="tab" aria-selected="false" aria-controls="mode-panel" tabindex="-1" data-mode="critical">Critical</button></div><p class="small-note">`/debate` 是等价兼容入口。无自动扩展轮次；HY4 不会自动替补。</p></div>
+        <div><p class="eyebrow">02 / CHOOSE THE DEPTH</p><h2>选择讨论深度。<br>边界始终清楚。</h2><p class="section-intro">小问题快速求证，重要决策充分对照。三种模式使用同一组四位顾问与安全限制。</p><div class="mode-tabs" role="tablist" aria-label="讨论模式"><button id="tab-quick" role="tab" aria-selected="false" aria-controls="mode-panel" tabindex="-1" data-mode="quick">Quick</button><button id="tab-normal" role="tab" aria-selected="true" aria-controls="mode-panel" data-mode="normal">默认 <span>2 轮</span></button><button id="tab-critical" role="tab" aria-selected="false" aria-controls="mode-panel" tabindex="-1" data-mode="critical">Critical</button></div><p class="small-note">`/debate` 是等价兼容入口。无自动扩展轮次；HY4 是第四位正式顾问。</p></div>
         <div id="mode-panel" class="mode-panel" role="tabpanel" aria-labelledby="tab-normal" tabindex="0">
           <div class="panel-heading"><span id="mode-label" class="mono">STANDARD COUNCIL</span><span class="pill" id="round-label">2 ROUNDS</span></div>
           <h3 id="mode-title">一次独立思考，一次交叉评阅。</h3>
           <p id="mode-description">架构选择、需求歧义与重要变更的默认讨论深度。</p>
-          <div class="mode-stats"><div><strong id="normal-calls">6</strong><span>正常 dispatch</span></div><div><strong id="extra-calls">6</strong><span>剩余故障预算</span></div><div><strong id="timeout">600<span>s</span></strong><span>整次调用时限</span></div></div>
-          <div id="budget" class="budget" aria-label="12 次预算中正常调用占 6 次，其余 6 次用于重试或纠错"><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="mode-stats"><div><strong id="normal-calls">8</strong><span>正常 dispatch</span></div><div><strong id="extra-calls">4</strong><span>剩余故障预算</span></div><div><strong id="timeout">600<span>s</span></strong><span>整次调用时限</span></div></div>
+          <div id="budget" class="budget" aria-label="12 次预算中正常调用占 8 次，其余 4 次用于重试或纠错"><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i class="used"></i><i></i><i></i><i></i><i></i></div>
           <div class="command-box"><code id="command">/council --rounds 2 评估当前架构与参数</code><button id="copy-command" type="button" aria-label="复制当前 Council 命令">复制</button></div>
           <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
           <p class="small-note">纠错次数是上限，不是预留名额。正常调用、重试和纠错共享 12 次预算。</p>
@@ -74,12 +75,12 @@
     </section>
 
     <section id="evidence" class="section wrap evidence">
-      <div class="section-heading"><div><p class="eyebrow">04 / VERIFIED, NOT ASSUMED</p><h2>让验收结果说话。</h2></div><div class="evidence-label"><span class="dot"></span>Linux 本机验收 · 2026-09-04</div></div>
-      <div class="evidence-layout"><div class="test-card"><span class="mono">FULL REGRESSION SNAPSHOT</span><strong>206<span> / Node</span></strong><p>67 项 Python · 9 项 Skill 解析测试<br>runner mock · 生成物 · 类型与包检查</p><div class="test-status">全部通过 <span>零跳过</span></div><p class="small-note">恢复、崩溃、纠错与预算竞争由 mock 和真实本地子进程测试覆盖。模型实测不替代这些测试。</p></div><div class="table-wrap"><table><caption>简短 Brief 的真实模型验收快照</caption><thead><tr><th scope="col">场景</th><th scope="col">轮次</th><th scope="col">Dispatch</th><th scope="col">耗时</th></tr></thead><tbody><tr><th scope="row">Quick</th><td>1</td><td>3 / 12</td><td>34 s</td></tr><tr><th scope="row">架构选择</th><td>2</td><td>6 / 12</td><td>64 s</td></tr><tr><th scope="row">需求歧义</th><td>2</td><td>6 / 12</td><td>116 s</td></tr><tr><th scope="row">Critical</th><td>3</td><td>9 / 12</td><td>190 s</td></tr></tbody></table><p class="small-note">已核对实际模型、并发、原子会话复用和 peer 内容一致性。四次模型验收均未触发跨进程 continuation。以上不是性能基准：一次更完整的两轮代码评阅耗时 425 秒。</p></div></div>
+      <div class="section-heading"><div><p class="eyebrow">04 / VERIFIED, NOT ASSUMED</p><h2>四人默认配置，<br>已有真实验证。</h2></div><div class="evidence-label"><span class="dot"></span>四人两轮验证通过</div></div>
+      <div class="evidence-layout"><div class="test-card"><span class="mono">CURRENT 4-PARTICIPANT REGRESSION</span><strong>214<span> / Node</span></strong><p>67 项 Python · 9 项 Skill 解析测试<br>runner mock · 生成物 · 类型与包检查</p><div class="test-status">全部通过 <span>零跳过</span></div><p class="small-note">四人 1/2/3 轮的 4/8/12 次调用和超预算中止均有本地测试。真实两轮已核对四个模型及每人三份 peer 内容。</p></div><div class="table-wrap"><table><caption>当前四人实测与三人历史参考</caption><thead><tr><th scope="col">阵容 / 场景</th><th scope="col">轮次</th><th scope="col">Dispatch</th><th scope="col">耗时</th></tr></thead><tbody><tr><th scope="row">四人 · 默认</th><td>2</td><td>8 / 12</td><td>306 s</td></tr><tr><th scope="row">三人 · Quick</th><td>1</td><td>3 / 12</td><td>34 s</td></tr><tr><th scope="row">三人 · 架构</th><td>2</td><td>6 / 12</td><td>64 s</td></tr><tr><th scope="row">三人 · 歧义</th><td>2</td><td>6 / 12</td><td>116 s</td></tr><tr><th scope="row">三人 · Critical</th><td>3</td><td>9 / 12</td><td>190 s</td></tr></tbody></table><p class="small-note">当前四人只做了真实两轮验证，未把三人历史实测当作四人结果。各次 Brief 不同，以上不是性能基准。历史三人完整代码评阅曾耗时 425 秒；三人回归快照为 206 项 Node 测试。</p></div></div>
     </section>
 
     <section id="start" class="section wrap start-section">
-      <div class="start-copy"><p class="eyebrow">05 / BRING YOUR OWN JUDGMENT</p><h2>下一次重要决定，<br>多问三个视角。</h2><p>已有本机安装时，在 Codex 中明确调用 <code>$codex-council</code>。小问题使用 quick，重要选择保留两轮，critical 留给真正需要的任务。</p><a class="button primary" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council#开始使用">阅读完整安装说明 <span aria-hidden="true">↗</span></a><p class="small-note">源码公开，运行需自行配置 OpenCode Go。npm 尚未发布；此页面不是在线讨论服务。</p></div>
+      <div class="start-copy"><p class="eyebrow">05 / BRING YOUR OWN JUDGMENT</p><h2>下一次重要决定，<br>多问四个视角。</h2><p>已有本机安装时，在 Codex 中明确调用 <code>$codex-council</code>。小问题使用 quick，重要选择保留两轮，critical 留给真正需要的任务。</p><a class="button primary" href="https://github.com/aka-debug-jie/opencode-council/tree/feature/council#开始使用">阅读完整安装说明 <span aria-hidden="true">↗</span></a><p class="small-note">源码公开，运行需自行配置 OpenCode Go。npm 尚未发布；此页面不是在线讨论服务。</p></div>
       <div class="install-card"><div class="terminal-header"><span class="mono">LOCAL CHECKOUT</span><span aria-hidden="true">● ● ●</span></div><pre><code><span class="code-comment"># 先使用 Node 24.15.0 与 Python 3</span>
 npm ci
 sh scripts/verify.sh

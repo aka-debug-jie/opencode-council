@@ -9,6 +9,9 @@ participants:
   council-glm:
     description: Neutral GLM council participant
     model: opencode-go/glm-5.3-flash
+  council-hy4:
+    description: Neutral HY4 council participant
+    model: opencode-go/hy4-preview
 sets:
   council:
     default: yes
@@ -16,3 +19,4 @@ sets:
       - council-muse
       - council-qwen
       - council-glm
+      - council-hy4

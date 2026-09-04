@@ -11,7 +11,7 @@ import { validateCouncilReport } from "./report.ts"
 export const TASK_DISPATCH_MARKER = "DEBATE_DISPATCH"
 export type TaskDispatchPurpose = Dispatch["purpose"]
 export type TaskDispatchMarker = { purpose: TaskDispatchPurpose; participant: number; round: number; subagentType: string }
-const MARKER = /^\[DEBATE_DISPATCH purpose=(normal|retry|formatter-correction) participant=([1-3]) round=([1-9][0-9]*) subagent_type=([^\s\]]+)\]$/
+const MARKER = /^\[DEBATE_DISPATCH purpose=(normal|retry|formatter-correction) participant=([1-4]) round=([1-9][0-9]*) subagent_type=([^\s\]]+)\]$/
 const TASK = /^<task id="([^"]+)" state="(running|completed|error)">[\s\S]*<task_(result|error)>\s*([\s\S]*?)\s*<\/task_\3>[\s\S]*<\/task>$/
 export function parseTaskDispatchMarker(prompt: unknown): TaskDispatchMarker | undefined {
   if (typeof prompt !== "string" || !prompt.startsWith("[DEBATE_DISPATCH")) return undefined
@@ -179,7 +179,7 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
       if (input.tool === "format_debate_response") {
         await mutation(id, state => {
           assertLive(state, input.sessionID)
-          if (![1,2,3].includes(args.participant) || !Number.isInteger(args.round) || args.round < 1 || args.round > state.rounds) reject(state, "invalid formatter participant/round")
+          if (!Number.isInteger(args.participant) || args.participant < 1 || args.participant > state.registry.participants.length || !Number.isInteger(args.round) || args.round < 1 || args.round > state.rounds) reject(state, "invalid formatter participant/round")
           const k = key(input.sessionID, args.participant, args.round)
           if (formatCalls.has(k)) reject(state, "duplicate active formatter call", args.participant, args.round)
           formatCalls.set(k, input.callID)
@@ -211,10 +211,10 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
         if (purpose === "normal") {
           if (history.length) reject(state, "duplicate normal dispatch; use the eligible retry or correction", p, round)
           if (round > 1) {
-            for (let previous = 1; previous < round; previous++) for (let other = 1; other <= 3; other++) {
+            for (let previous = 1; previous < round; previous++) for (let other = 1; other <= state.registry.participants.length; other++) {
               if (!state.validated[other + ":" + previous]) reject(state, "previous round is not fully canonical", p, round)
             }
-            const peers = [1,2,3].filter(other => other !== p).map(other => {
+            const peers = state.registry.participants.map((_,i) => i+1).filter(other => other !== p).map(other => {
               const canonical = canonicalResults.get(key(state.sessionID, other, round - 1))
               if (!canonical || digest(canonical) !== state.validated[other + ":" + (round-1)]?.digest) reject(state, "canonical peer evidence unavailable", p, round)
               return { participant: other, turn_response: JSON.parse(canonical) }
@@ -258,8 +258,8 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
     dispose: async () => { store.dispose() },
   }
   const formatter = tool({
-    description: "Validate the actual completed participant result. Supply participant (1–3) and round only; do not rewrite or copy its JSON. Runtime returns the canonical turn.",
-    args: { participant: tool.schema.number().int().min(1).max(3), round: tool.schema.number().int().min(1).max(3) },
+    description: "Validate the actual completed participant result. Supply a participant slot from the resolved registry (1–4) and round only; do not rewrite or copy its JSON. Runtime returns the canonical turn.",
+    args: { participant: tool.schema.number().int().min(1).max(4), round: tool.schema.number().int().min(1).max(3) },
     async execute({participant, round}, context) {
       const id = find(context.sessionID)
       if (!id) throw new Error("Formatter has no Council safety state")

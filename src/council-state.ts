@@ -55,13 +55,13 @@ function validate(value: unknown, id: string): asserts value is RunState {
     || !Number.isFinite(s.deadlineMs) || ![1, 2, 3].includes(s.rounds)
     || !["active", "ready", "aborted", "completed"].includes(s.status)
     || !Array.isArray(s.dispatches) || s.dispatches.length > 12
-    || !s.registry || !Array.isArray(s.registry.participants) || s.registry.participants.length !== 3
+    || !s.registry || !Array.isArray(s.registry.participants) || ![3,4].includes(s.registry.participants.length)
     || !s.validated || typeof s.validated !== "object" || Array.isArray(s.validated)
     || !Number.isInteger(s.continuations) || s.continuations < 0 || s.continuations > 8
     || !Array.isArray(s.continuedMessageIDs) || s.continuedMessageIDs.length !== s.continuations
     || new Set(s.continuedMessageIDs).size !== s.continuations || s.continuedMessageIDs.some(id => typeof id !== "string" || !id)
     || new Set(s.dispatches.map(d => d.callID)).size !== s.dispatches.length
-    || s.dispatches.some(d => typeof d.callID !== "string" || ![1,2,3].includes(d.participant)
+    || s.dispatches.some(d => typeof d.callID !== "string" || !Number.isInteger(d.participant) || d.participant < 1 || d.participant > s.registry.participants.length
       || !Number.isInteger(d.round) || d.round < 1 || d.round > s.rounds
       || !["normal", "retry", "formatter-correction"].includes(d.purpose)
       || !["active", "completed", "failed"].includes(d.status)
@@ -69,12 +69,12 @@ function validate(value: unknown, id: string): asserts value is RunState {
       || (d.status === "completed" && !/^[a-f0-9]{64}$/.test(d.outputDigest ?? "")))
     || (s.status === "aborted" && !s.abort?.reason)) throw new Error("Council safety state is corrupt")
   const names = s.registry.sets[s.registry.defaultSet]
-  if (!names || names.length !== 3 || new Set(names).size !== 3 || names.some(n => !s.registry.participants.some(p => p.agent === n))) {
+  if (!names || names.length !== s.registry.participants.length || new Set(names).size !== names.length || names.some(n => !s.registry.participants.some(p => p.agent === n))) {
     throw new Error("Council registry snapshot is corrupt")
   }
   if (s.registry.participants.some(p => typeof p.agent !== "string" || !p.agent || typeof p.model !== "string" || !p.model)
     || s.dispatches.some(d => d.agent !== names[d.participant - 1])
-    || Object.entries(s.validated).some(([key,v]) => !/^[1-3]:[1-3]$/.test(key) || !v || !v.callID || !v.formatterCallID || !/^[a-f0-9]{64}$/.test(v.digest))) {
+    || Object.entries(s.validated).some(([key,v]) => !/^[1-4]:[1-3]$/.test(key) || Number(key[0]) > names.length || Number(key[2]) > s.rounds || !v || !v.callID || !v.formatterCallID || !/^[a-f0-9]{64}$/.test(v.digest))) {
     throw new Error("Council safety state contains invalid task or validation records")
   }
 }
@@ -177,7 +177,7 @@ export function assertLive(state: RunState, sessionID = state.sessionID): void {
   if (Date.now() >= state.deadlineMs) { abortRun(state, "Council deadline exhausted"); throw new Error("Council deadline exhausted") }
 }
 export function allValidated(state: RunState): boolean {
-  for (let round = 1; round <= state.rounds; round++) for (let p = 1; p <= 3; p++) {
+  for (let round = 1; round <= state.rounds; round++) for (let p = 1; p <= state.registry.participants.length; p++) {
     const v = state.validated[`${p}:${round}`]
     const d = v && state.dispatches.find(d => d.callID === v.callID)
     if (!d || d.participant !== p || d.round !== round || d.status !== "completed" || !v.digest || !v.formatterCallID) return false

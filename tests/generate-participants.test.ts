@@ -14,7 +14,7 @@ import {
 
 test("participant registry defines the supported sets", () => {
   assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["council"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm"])
+  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm", "council-hy4"])
 })
 
 test("participant registry contains metadata for every referenced agent", () => {
@@ -24,11 +24,12 @@ test("participant registry contains metadata for every referenced agent", () => 
   }
 })
 
-test("all three shipped participants have the intended model mapping", () => {
+test("all four shipped participants have the intended model mapping", () => {
   assert.deepEqual(DEBATE_PARTICIPANTS.map(({ agent, model }) => [agent, model]), [
     ["council-muse", "opencode-go/muse-spark-1.3-contributor"],
     ["council-qwen", "opencode-go/qwen3.8-flash"],
     ["council-glm", "opencode-go/glm-5.3-flash"],
+    ["council-hy4", "opencode-go/hy4-preview"],
   ])
 })
 

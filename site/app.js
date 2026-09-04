@@ -2,13 +2,13 @@
   const modes = {
     quick: {rounds:1,label:'QUICK COUNCIL',title:'先拿到一组独立的第二意见。',description:'适合小范围判断、快速求证；没有交叉评阅轮次。'},
     normal: {rounds:2,label:'STANDARD COUNCIL',title:'一次独立思考，一次交叉评阅。',description:'架构选择、需求歧义与重要变更的默认讨论深度。'},
-    critical: {rounds:3,label:'CRITICAL COUNCIL',title:'多一次对照，也更接近预算边界。',description:'适合确需第三轮追问的决策；正常调用后只剩 3 次故障预算。'},
+    critical: {rounds:3,label:'CRITICAL COUNCIL',title:'多一次对照，正常调用用满预算。',description:'适合确需第三轮追问的决策；12 次正常调用用满预算，无额外重试或纠错额度。'},
   };
   const byId = id => document.getElementById(id);
   const tabs = [...document.querySelectorAll('[data-mode]')];
   function select(mode) {
     const data = modes[mode];
-    const calls = data.rounds * 3;
+    const calls = data.rounds * 4;
     tabs.forEach(tab => {
       const active = tab.dataset.mode === mode;
       tab.setAttribute('aria-selected', String(active));

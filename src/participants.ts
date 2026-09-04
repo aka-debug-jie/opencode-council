@@ -30,7 +30,7 @@ export type ParticipantConfigEntry = {
 }
 
 export type ParticipantSetConfig = {
-  participants: [string, string, string]
+  participants: [string, string, string] | [string, string, string, string]
   default?: "yes"
 }
 
@@ -198,8 +198,8 @@ export function parseParticipantConfig(source: string, configPath: string): Part
     assertKnownFields(rawSet, SET_FIELDS, configPath, fieldPath)
 
     const rawMembers = rawSet.participants
-    if (!Array.isArray(rawMembers) || rawMembers.length !== 3) {
-      invalid(configPath, `${fieldPath}.participants`, "expected exactly three participant IDs")
+    if (!Array.isArray(rawMembers) || ![3, 4].includes(rawMembers.length)) {
+      invalid(configPath, `${fieldPath}.participants`, "expected three or four participant IDs")
     }
     const members = rawMembers.map((value, index) => {
       const member = optionalNonEmptyString(value, configPath, `${fieldPath}.participants[${index}]`)
@@ -208,8 +208,8 @@ export function parseParticipantConfig(source: string, configPath: string): Part
       }
       return member
     })
-    if (new Set(members).size !== 3) {
-      invalid(configPath, `${fieldPath}.participants`, "expected three distinct participant IDs")
+    if (new Set(members).size !== members.length) {
+      invalid(configPath, `${fieldPath}.participants`, "expected distinct participant IDs")
     }
     for (const [index, participant] of members.entries()) {
       if (!Object.hasOwn(participantsConfig, participant)) {
@@ -222,7 +222,7 @@ export function parseParticipantConfig(source: string, configPath: string): Part
     }
 
     const parsedSet: ParticipantSetConfig = {
-      participants: members as [string, string, string],
+      participants: members as ParticipantSetConfig["participants"],
     }
     if (Object.hasOwn(rawSet, "default")) {
       if (markedDefault !== undefined) {
