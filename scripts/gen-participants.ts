@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { DEBATE_PARTICIPANTS, type DebateParticipant } from "../src/participants.ts"
 import { COUNCIL_LIMITS } from "../src/limits.ts"
+import { buildCoordinatorPrompt } from "../src/coordinator-prompt.ts"
 
 type GenerateOptions = {
   root?: string
@@ -79,7 +80,13 @@ export function renderCoordinatorAgent(
     '    "*": "deny"',
     ...participants.map(({ agent }) => `    "${agent}": "allow"`),
   ]
-  return [...lines.slice(0, taskLine + 1), ...permissions, ...lines.slice(taskEnd)].join("\n")
+  return [
+    "---", "description: Coordinates bounded advisory councils", "mode: primary", "hidden: true",
+    "model: opencode-go/gpt-5.6-luna", "permission:", '  "*": "deny"',
+    "  external_directory: deny", "  question: deny", "  persist_debate_transcript: deny",
+    "  format_debate_response: allow", "  task:", ...permissions,
+    "---", "", buildCoordinatorPrompt(participants), "",
+  ].join("\n")
 }
 
 export function checkParticipantAgents(options: GenerateOptions = {}): CheckResult {

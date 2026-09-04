@@ -12,6 +12,8 @@ import {
   runResponseFormatter,
 } from "../src/response-formatter.ts"
 import { createServer } from "../index.ts"
+import { CouncilStateStore } from "../src/council-state.ts"
+import { limitCanonicalTurn } from "../src/response-formatter.ts"
 import type { DebateRegistry } from "../src/participants.ts"
 
 const TEST_REGISTRY: DebateRegistry = {
@@ -126,7 +128,9 @@ test("response formatter plugin registers an executable custom tool", async () =
   )
 })
 
-test("project-local plugin bridge satisfies the OpenCode v1.17.13 file-plugin loader", () => {
+test("project-local plugin bridge satisfies the OpenCode v1.17.13 file-plugin loader", (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "council-bridge-state-"))
+  t.after(() => rmSync(stateDir, {recursive:true, force:true}))
   const pluginUrl = new URL("../.opencode/plugin/debate.ts", import.meta.url).href
   const script = [
     `const bridge = await import(${JSON.stringify(pluginUrl)})`,
@@ -161,25 +165,47 @@ test("project-local plugin bridge satisfies the OpenCode v1.17.13 file-plugin lo
   const result = spawnSync(
     process.execPath,
     ["--disable-warning=MODULE_TYPELESS_PACKAGE_JSON", "--input-type=module", "--eval", script],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: {...process.env, COUNCIL_STATE_DIR: stateDir} },
   )
 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 })
 
-test("installed plugin server registers the response formatter tool", async () => {
-  const hooks = await createServer(() => TEST_REGISTRY)({
+test("installed formatter reads the admitted task rather than a coordinator-supplied response", async (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), "council-format-state-"))
+  const store = new CouncilStateStore(stateDir)
+  t.after(() => { store.dispose(); rmSync(stateDir, {recursive:true, force:true}) })
+  const hooks = await createServer(() => TEST_REGISTRY, store)({
     client: { app: { log: async () => ({ data: true }) } },
     directory: "/tmp/project",
     worktree: "/tmp/project",
   } as never)
   const formatter = hooks.tool?.[FORMAT_DEBATE_RESPONSE_TOOL]
   assert.ok(formatter)
-
+  await hooks["command.execute.before"]!({command:"council",sessionID:"format-session",arguments:"--rounds 1 test"},{parts:[]})
+  const args = {subagent_type:"one",prompt:"[DEBATE_DISPATCH purpose=normal participant=1 round=1 subagent_type=one]\nReturn JSON"}
+  await hooks["tool.execute.before"]!({tool:"task",sessionID:"format-session",callID:"task-one"},{args})
+  await hooks["tool.execute.after"]!({tool:"task",sessionID:"format-session",callID:"task-one",args},
+    {title:"done",metadata:{},output:'<task id="child-one" state="completed"><task_result>{"turn":"server"}</task_result></task>'})
+  await hooks["tool.execute.before"]!({tool:FORMAT_DEBATE_RESPONSE_TOOL,sessionID:"format-session",callID:"format-one"},{args:{participant:1,round:1}})
   assert.equal(
-    await formatter.execute({ response: '{"turn":"server"}', schema: "round1" }, {} as never),
+    await formatter.execute({ participant:1, round:1, response:'{"turn":"coordinator forgery"}' }, {sessionID:"format-session"} as never),
     '{"turn": "server"}',
   )
+})
+
+test("canonical limit includes the marker and does not split Unicode codepoints", () => {
+  for (const character of ["x", "中", "😀"]) {
+    const source = JSON.stringify({turn: character.repeat(8001), consensus_reached:false, recommend_stopping:false})
+    const result = JSON.parse(limitCanonicalTurn(source))
+    assert.equal(Array.from(result.turn).length, 8000)
+    assert.ok(result.turn.endsWith("[Truncated by council safety limit]"))
+    assert.equal(result.consensus_reached, false)
+    assert.equal(result.recommend_stopping, false)
+    assert.ok(!result.turn.includes("\ufffd"))
+  }
+  const exact = JSON.stringify({turn:"😀".repeat(8000)})
+  assert.equal(limitCanonicalTurn(exact), exact)
 })
 
 test("runtime permissions allow only the debate coordinator to format responses", async () => {

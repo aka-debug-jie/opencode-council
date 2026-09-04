@@ -1,0 +1,10 @@
+{
+  "truncated": "{\"messages\":[",
+  "empty": {"messages": []},
+  "running": {"messages": [{"info": {"id": "msg-1", "role": "assistant", "finish": "tool-calls"}, "parts": [{"type": "tool", "tool": "task", "state": {"status": "running"}}]}]},
+  "completed_tool_calls": {"messages": [{"info": {"id": "msg-1", "role": "assistant", "finish": "tool-calls"}, "parts": [{"type": "tool", "tool": "task", "state": {"status": "completed"}}]}]},
+  "completed_without_finish": {"messages": [{"info": {"id": "msg-1", "role": "assistant", "finish": null}, "parts": [{"type": "tool", "tool": "task", "state": {"status": "completed"}}]}]},
+  "errored_tool_calls": {"messages": [{"info": {"id": "msg-1", "role": "assistant", "finish": "tool-calls"}, "parts": [{"type": "tool", "tool": "format_debate_response", "state": {"status": "error"}}]}]},
+  "stopped_report": {"messages": [{"info": {"id": "msg-2", "role": "assistant", "finish": "stop"}, "parts": [{"type": "text", "text": "## Council Report\n\n### Participant findings\nA\n\n### Agreements\nB\n\n### Disagreements\nC\n\n### Risks\nD\n\n### Falsification tests\nE\n\n### Unresolved questions\nF"}]}]},
+  "stopped_without_report": {"messages": [{"info": {"id": "msg-2", "role": "assistant", "finish": "stop"}, "parts": [{"type": "text", "text": "Done"}]}]}
+}

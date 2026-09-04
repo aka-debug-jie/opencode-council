@@ -1,9 +1,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DEBATE_PARTICIPANT_SETS, DEBATE_PARTICIPANTS } from "../src/participants.ts"
+import { buildCoordinatorPrompt, coordinatorPermission, PARTICIPANT_PERMISSION } from "../index.ts"
+import { parse } from "yaml"
 import {
   checkParticipantAgents,
   renderCoordinatorAgent,
@@ -11,9 +13,8 @@ import {
 } from "../scripts/gen-participants.ts"
 
 test("participant registry defines the supported sets", () => {
-  assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["default", "cheap"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.default, ["debate-kimi", "debate-anthropic", "debate-openai"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.cheap, ["debate-glm", "debate-qwen", "debate-kimi"])
+  assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["council"])
+  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm"])
 })
 
 test("participant registry contains metadata for every referenced agent", () => {
@@ -23,42 +24,39 @@ test("participant registry contains metadata for every referenced agent", () => 
   }
 })
 
-test("anthropic participant uses Claude Opus 5 through OpenRouter", () => {
-  const participant = DEBATE_PARTICIPANTS.find((entry) => entry.agent === "debate-anthropic")
-
-  assert.deepEqual(participant, {
-    agent: "debate-anthropic",
-    description: "Neutral debate participant using Claude Opus 5 through OpenRouter (high)",
-    model: "openrouter/anthropic/claude-opus-5",
-    variant: "high",
-  })
+test("all three shipped participants have the intended model mapping", () => {
+  assert.deepEqual(DEBATE_PARTICIPANTS.map(({ agent, model }) => [agent, model]), [
+    ["council-muse", "opencode-go/muse-spark-1.3-contributor"],
+    ["council-qwen", "opencode-go/qwen3.8-flash"],
+    ["council-glm", "opencode-go/glm-5.3-flash"],
+  ])
 })
 
 test("renderParticipantAgent combines participant metadata with the shared body", () => {
-  const participant = DEBATE_PARTICIPANTS.find((entry) => entry.agent === "debate-openai")
-  assert.ok(participant)
+  const participant = { ...DEBATE_PARTICIPANTS[0], variant: "high" }
 
   const rendered = renderParticipantAgent(participant, "Shared participant instructions.\n")
 
-  assert.match(rendered, /description: Neutral debate participant using OpenAI GPT-5.6 Sol \(xhigh\)/)
-  assert.match(rendered, /model: openai\/gpt-5\.6-sol/)
-  assert.match(rendered, /variant: xhigh/)
+  assert.match(rendered, /description: Neutral Muse council participant/)
+  assert.match(rendered, /model: opencode-go\/muse-spark-1\.3-contributor/)
+  assert.match(rendered, /variant: high/)
+  assert.match(rendered, /^steps: 5$/m)
   assert.match(rendered, /^hidden: true$/m)
   assert.match(rendered, /permission:\n  "\*": "deny"/)
   assert.match(rendered, /  read:\n    "\*": "allow"/)
   assert.match(rendered, /    "\*\.env": "deny"/)
   assert.match(rendered, /    "\*\.env\.\*": "deny"/)
   assert.match(rendered, /    "\*\.env\.example": "allow"/)
-  for (const tool of ["grep", "glob", "lsp", "webfetch", "websearch"]) {
+  for (const tool of ["grep", "glob", "lsp"]) {
     assert.match(rendered, new RegExp(`  ${tool}: allow`))
   }
-  assert.match(rendered, /  bash: ask/)
-  for (const tool of ["external_directory", "edit", "question", "task", "skill"]) {
+  for (const tool of ["bash", "webfetch", "websearch", "external_directory", "edit", "question", "task", "skill"]) {
     assert.match(rendered, new RegExp(`  ${tool}: deny`))
   }
   assert.doesNotMatch(rendered, /"find \*"|"echo \*"|"cat \*"|git (show|diff|log)/)
   assert.match(rendered, /Shared participant instructions\./)
   assert.equal(rendered.endsWith("\n"), true)
+  assert.deepEqual(parse(rendered.split("---")[1]).permission, PARTICIPANT_PERMISSION)
 })
 
 test("renderParticipantAgent omits variant when it is not configured", () => {
@@ -72,7 +70,7 @@ test("renderParticipantAgent omits variant when it is not configured", () => {
   assert.doesNotMatch(rendered, /^variant:/m)
 })
 
-test("renderCoordinatorAgent replaces only coordinator task permissions", () => {
+test("renderCoordinatorAgent emits unified prompt and permissions, discarding stale body", () => {
   const source = [
     "---",
     "description: Coordinator",
@@ -88,30 +86,31 @@ test("renderCoordinatorAgent replaces only coordinator task permissions", () => 
     "",
   ].join("\n")
 
-  const rendered = renderCoordinatorAgent(source, [
+  const participants = [
     { agent: "debate-one", description: "One", model: "provider/one" },
     { agent: "debate-two", description: "Two", model: "provider/two" },
-  ])
-
-  assert.equal(rendered, [
-    "---",
-    "description: Coordinator",
-    "permission:",
-    '  "*": "deny"',
-    "  task:",
-    '    "*": "deny"',
-    '    "debate-one": "allow"',
-    '    "debate-two": "allow"',
-    "  question: allow",
-    "---",
-    "",
-    "Coordinator body.",
-    "",
-  ].join("\n"))
+  ]
+  const rendered = renderCoordinatorAgent(source, participants)
+  const [, frontmatter, body] = rendered.split("---")
+  assert.deepEqual(parse(frontmatter).permission, coordinatorPermission(participants))
+  assert.equal(parse(frontmatter).model, "opencode-go/gpt-5.6-luna")
+  assert.equal(body.trim(), buildCoordinatorPrompt(participants))
+  assert.doesNotMatch(rendered, /Coordinator body\.|"stale"/)
+  assert.equal(renderCoordinatorAgent(rendered, participants), rendered)
 })
 
-test("checkParticipantAgents reports generated-file drift without writing", () => {
+test("renderCoordinatorAgent rejects malformed original frontmatter and task blocks", () => {
+  for (const [source, diagnostic] of [
+    ["body", /begin with YAML frontmatter/],
+    ["---\npermission:", /not closed/],
+    ["---\npermission: {}\n---\n", /found 0/],
+    ["---\npermission:\n  task:\n  task:\n---\n", /found 2/],
+  ] as const) assert.throws(() => renderCoordinatorAgent(source, DEBATE_PARTICIPANTS), diagnostic)
+})
+
+test("checkParticipantAgents reports generated-file drift without writing", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "debate-agents-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const agentDir = join(dir, ".opencode", "agents")
   const body = "Shared participant instructions.\n"
   const participant = DEBATE_PARTICIPANTS[0]
@@ -136,8 +135,9 @@ test("checkParticipantAgents reports generated-file drift without writing", () =
   assert.equal(readFileSync(stalePath, "utf8"), "stale\n")
 })
 
-test("checkParticipantAgents reports coordinator permission drift", () => {
+test("checkParticipantAgents reports coordinator permission drift", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "debate-agents-"))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
   const agentDir = join(dir, ".opencode", "agents")
   const body = "Shared participant instructions.\n"
   const participant = DEBATE_PARTICIPANTS[0]

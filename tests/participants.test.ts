@@ -61,51 +61,32 @@ test("packaged config.yaml preserves the shipped version 2 participant registry"
   assert.deepEqual(config, {
     version: 2,
     participants: {
-      "debate-openai": {
-        description: "Neutral debate participant using OpenAI GPT-5.6 Sol (xhigh)",
-        model: "openai/gpt-5.6-sol",
-        variant: "xhigh",
+      "council-muse": {
+        description: "Neutral Muse council participant",
+        model: "opencode-go/muse-spark-1.3-contributor",
       },
-      "debate-glm": {
-        description: "Neutral debate participant using GLM-5.2 from OpenCode Go (max)",
-        model: "opencode-go/glm-5.2",
-        variant: "max",
+      "council-qwen": {
+        description: "Neutral Qwen council participant",
+        model: "opencode-go/qwen3.8-flash",
       },
-      "debate-kimi": {
-        description: "Neutral debate participant using Kimi K3 from OpenCode Go (max)",
-        model: "opencode-go/kimi-k3",
-        variant: "max",
-      },
-      "debate-anthropic": {
-        description: "Neutral debate participant using Claude Opus 5 through OpenRouter (high)",
-        model: "openrouter/anthropic/claude-opus-5",
-        variant: "high",
-      },
-      "debate-qwen": {
-        description: "Neutral debate participant using Qwen 3.7 Max from OpenCode Go (max)",
-        model: "opencode-go/qwen3.7-max",
-        variant: "max",
+      "council-glm": {
+        description: "Neutral GLM council participant",
+        model: "opencode-go/glm-5.3-flash",
       },
     },
     sets: {
-      default: {
+      council: {
         default: "yes",
-        continuation: "ask",
-        participants: ["debate-kimi", "debate-anthropic", "debate-openai"],
-      },
-      cheap: {
-        continuation: "ask",
-        participants: ["debate-glm", "debate-qwen", "debate-kimi"],
+        participants: ["council-muse", "council-qwen", "council-glm"],
       },
     },
   })
 })
 
 test("packaged compatibility exports are loaded from config.yaml", () => {
-  assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["default", "cheap"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.default, ["debate-kimi", "debate-anthropic", "debate-openai"])
-  assert.deepEqual(DEBATE_PARTICIPANT_SETS.cheap, ["debate-glm", "debate-qwen", "debate-kimi"])
-  assert.equal(DEBATE_PARTICIPANTS.length, 5)
+  assert.deepEqual(Object.keys(DEBATE_PARTICIPANT_SETS), ["council"])
+  assert.deepEqual(DEBATE_PARTICIPANT_SETS.council, ["council-muse", "council-qwen", "council-glm"])
+  assert.equal(DEBATE_PARTICIPANTS.length, 3)
 })
 
 test("description and variant are optional source fields", () => {
@@ -113,28 +94,14 @@ test("description and variant are optional source fields", () => {
   assert.deepEqual(parsed.participants.one, { model: "provider/one" })
 })
 
-test("an omitted continuation mode normalises to ask", () => {
+test("an omitted continuation field stays absent", () => {
   const parsed = parseParticipantConfig(completeConfig(), "/tmp/config.yaml")
 
-  assert.equal(parsed.sets.alpha.continuation, "ask")
+  assert.deepEqual(parsed.sets.alpha, { participants: ["one", "two", "three"] })
 })
 
-test("ask and discretion are accepted continuation modes", () => {
-  const parsed = parseParticipantConfig(completeConfig(`
-  alpha:
-    participants: [one, two, three]
-    continuation: ask
-  beta:
-    participants: [one, three, unused]
-    continuation: discretion
-`), "/tmp/config.yaml")
-
-  assert.equal(parsed.sets.alpha.continuation, "ask")
-  assert.equal(parsed.sets.beta.continuation, "discretion")
-})
-
-test("continuation modes reject invalid types and values", () => {
-  for (const value of ["true", "1", "[ask]", "manual", "ASK", "\"\""]) {
+test("all continuation fields are rejected, including legacy ask and discretion", () => {
+  for (const value of ["ask", "discretion", "true", "1", "[ask]", "manual", "ASK", "\"\""]) {
     assertInvalidConfig(
       completeConfig(`
   alpha:
@@ -142,7 +109,7 @@ test("continuation modes reject invalid types and values", () => {
     continuation: ${value}
 `),
       "sets.alpha.continuation",
-      /expected ask or discretion/,
+      /unknown field/,
     )
   }
 })
@@ -225,9 +192,9 @@ test("set participant IDs must be non-empty strings", () => {
   )
 })
 
-test("set mappings recognise continuation but reject other unknown fields and an empty set mapping", () => {
+test("set mappings reject unknown fields and an empty set mapping", () => {
   assertInvalidConfig(
-    completeConfig("\n  alpha:\n    participants: [one, two, three]\n    continuation: ask\n    rounds: 4\n"),
+    completeConfig("\n  alpha:\n    participants: [one, two, three]\n    rounds: 4\n"),
     "sets.alpha.rounds",
     /unknown field/i,
   )
@@ -299,8 +266,7 @@ test("unused participants remain in a deeply frozen runtime registry", () => {
     assert.equal(Object.isFrozen(registry.participants[0]), true)
     assert.equal(Object.isFrozen(registry.sets), true)
     assert.equal(Object.isFrozen(registry.sets.alpha), true)
-    assert.deepEqual(registry.continuationBySet, { alpha: "ask" })
-    assert.equal(Object.isFrozen(registry.continuationBySet), true)
+    assert.equal(Object.hasOwn(registry, "continuationBySet"), false)
   })
 })
 
@@ -466,13 +432,13 @@ test("user read failures abort instead of falling back to packaged config", () =
 test("XDG_CONFIG_HOME selects the user config base directory", () => {
   assert.equal(
     resolveUserConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }, "/home/tester"),
-    "/tmp/xdg/opencode/opencode-debate/config.yaml",
+    "/tmp/xdg/opencode/opencode-council/config.yaml",
   )
 })
 
 test("the home .config directory is used when XDG_CONFIG_HOME is absent", () => {
   assert.equal(
     resolveUserConfigPath({}, "/home/tester"),
-    "/home/tester/.config/opencode/opencode-debate/config.yaml",
+    "/home/tester/.config/opencode/opencode-council/config.yaml",
   )
 })

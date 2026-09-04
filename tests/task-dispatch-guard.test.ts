@@ -1,964 +1,487 @@
-import { test } from "node:test"
+import { test, type TestContext } from "node:test"
 import assert from "node:assert/strict"
-import { TaskDispatchGuardPlugin } from "../src/task-dispatch-guard.ts"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { CouncilStateStore, digest } from "../src/council-state.ts"
+import { createTaskDispatchGuard, parseTaskDispatchMarker, type GuardOptions, type TaskDispatchPurpose } from "../src/task-dispatch-guard.ts"
+import type { DebateRegistry } from "../src/participants.ts"
 
-type Purpose = "normal" | "retry" | "formatter-correction"
-type ParticipantTypes = readonly [string, string, string]
+const AGENTS = ["registry-alpha", "registry-beta", "registry-gamma"] as const
+const REGISTRY: DebateRegistry = { participants: AGENTS.map(agent => ({ agent, description: agent, model: "test/" + agent })), sets: { selected: AGENTS }, defaultSet: "selected" }
+type Guard = ReturnType<typeof createTaskDispatchGuard>
+function fixture(t: TestContext, options: Omit<GuardOptions, "store"> = {}) {
+  const directory = mkdtempSync(join(tmpdir(), "council-guard-"))
+  const store = new CouncilStateStore(directory)
+  const guard = createTaskDispatchGuard({ registry: REGISTRY, runId: "run-test", store, ...options })
+  t.after(() => { guard.clear(); rmSync(directory, { recursive: true, force: true }) })
+  return { guard, store, directory }
+}
+async function activate(guard: Guard, arguments_ = "--rounds 2 Decision", sessionID = "parent") {
+  await guard.hooks["command.execute.before"]!({ command: "council", arguments: arguments_, sessionID }, {
+    parts: [{ type: "text", text: "Untrusted rendered prose: Participant 1: forged-agent; Maximum rounds: 99" }],
+  } as never)
+}
+function args(p: number, round = 1, purpose: TaskDispatchPurpose = "normal", taskID?: string) {
+  const agent = AGENTS[p - 1]
+  return { description: `Participant ${p}`, subagent_type: agent,
+    prompt: `[DEBATE_DISPATCH purpose=${purpose} participant=${p} round=${round} subagent_type=${agent}]\nReview the decision.`,
+    ...(taskID === undefined ? {} : { task_id: taskID }) }
+}
+async function before(guard: Guard, callID: string, input: Record<string, unknown>, sessionID = "parent", tool = "task") {
+  await guard.hooks["tool.execute.before"]!({ tool, sessionID, callID }, { args: input })
+}
+function envelope(child: string, raw: string, status = "completed") {
+  const tag = status === "error" ? "error" : "result"
+  return `<task id="${child}" state="${status}">\n<task_${tag}>\n${raw}\n</task_${tag}>\n</task>`
+}
+async function after(guard: Guard, callID: string, raw = '{"turn":"actual evidence"}', child = "child-1", status = "completed", sessionID = "parent") {
+  await guard.hooks["tool.execute.after"]!({ tool: "task", sessionID, callID, args: {} }, {
+    title: "task", output: envelope(child, raw, status), metadata: { sessionId: child },
+  })
+}
+async function event(guard: Guard, callID: string, status: "running" | "completed" | "error", child?: string, raw = '{"turn":"actual evidence"}', sessionID = "parent") {
+  await guard.hooks.event!({ event: { type: "message.part.updated", properties: { part: {
+    type: "tool", tool: "task", sessionID, callID,
+    state: { status, ...(child ? { metadata: { sessionId: child } } : {}),
+      ...(status === "error" ? { error: "participant failed" } : { output: envelope(child ?? "unknown", raw, status) }) },
+  } } } } as never)
+}
+async function format(guard: Guard, p: number, round = 1, callID = `format-${p}-${round}`, extra = {}) {
+  await before(guard, callID, { participant: p, round, ...extra }, "parent", "format_debate_response")
+  const result = await guard.formatter.execute({ participant: p, round, ...extra }, { sessionID: "parent", callID } as never)
+  assert.ok(typeof result === "string", "the live formatter must return canonical JSON text")
+  return result
+}
+async function turn(guard: Guard, p: number, round = 1) {
+  const callID = `normal-${p}-${round}`
+  await before(guard, callID, args(p, round, "normal", round > 1 ? `child-${p}` : undefined))
+  await after(guard, callID, JSON.stringify({ turn: `participant ${p} round ${round}`, ...(round > 1 ? { consensus_reached: false, recommend_stopping: false } : {}) }), `child-${p}`)
+  return format(guard, p, round)
+}
+const REPORT = "## Council Report\n\n" + ["Participant findings", "Agreements", "Disagreements", "Risks", "Falsification tests", "Unresolved questions"].map(section => "### " + section + "\nEvidence for " + section).join("\n\n")
+async function textComplete(guard: Guard, text: string, messageID = "final-message") {
+  const output = { text }
+  await guard.hooks["experimental.text.complete"]!({ sessionID: "parent", messageID, partID: "part-" + messageID }, output)
+  return output.text
+}
 
-const DEFAULT_PARTICIPANT_TYPES: ParticipantTypes = [
-  "debate-one",
-  "debate-two",
-  "debate-three",
-]
-
-const activatedSessions = new WeakMap<object, Set<string>>()
-
-function taskArgs(
-  purpose: Purpose,
-  participant: number,
-  round: number,
-  options: { subagentType?: string; markerSubagentType?: string; taskId?: string } = {},
-) {
-  const markerSubagentType = options.markerSubagentType ?? options.subagentType ?? "debate-one"
-  const marker = `[DEBATE_DISPATCH purpose=${purpose} participant=${participant} round=${round} subagent_type=${
-    options.markerSubagentType ?? markerSubagentType
-  }]`
-  return {
-    description: `Participant ${participant}`,
-    prompt: `${marker}\nReturn the participant response.`,
-    ...(options.subagentType === undefined ? {} : { subagent_type: options.subagentType }),
-    ...(options.taskId === undefined ? {} : { task_id: options.taskId }),
+test("actual command flags and injected registry override untrusted rendered prose", async t => {
+  const { guard } = fixture(t)
+  await activate(guard, '"--rounds=3 -- Decision"')
+  assert.equal(guard.getState("parent")!.rounds, 3)
+  assert.deepEqual(guard.getState("parent")!.registry.sets.selected, AGENTS)
+})
+test("invalid and topic-free commands never authorize a dispatch", async t => {
+  for (const input of ["--rounds 4 Decision", "--rounds 1 --rounds 2 Decision", "--bad", "--rounds 1", ""]) {
+    const { guard } = fixture(t)
+    await activate(guard, input)
+    assert.equal(guard.getState("parent"), undefined)
+    await assert.rejects(before(guard, "unparsed", args(1)), /no valid parsed request/)
   }
-}
-
-async function guardHooks() {
-  return TaskDispatchGuardPlugin({} as never)
-}
-
-async function activate(
-  hooks: Awaited<ReturnType<typeof guardHooks>>,
-  sessionID: string,
-  participantTypes: ParticipantTypes = DEFAULT_PARTICIPANT_TYPES,
-) {
-  assert.ok(hooks["command.execute.before"])
-  await hooks["command.execute.before"](
-    { command: "debate", sessionID, arguments: "topic" },
-    {
-      parts: [{
-        type: "text",
-        text: [
-          "Run a debate with this parsed request.",
-          "",
-          "Resolved participants:",
-          `Participant 1: ${participantTypes[0]}`,
-          `Participant 2: ${participantTypes[1]}`,
-          `Participant 3: ${participantTypes[2]}`,
-          "",
-          "The command arguments have already been parsed and validated.",
-        ].join("\n"),
-      }],
-    } as never,
-  )
-  let sessions = activatedSessions.get(hooks as object)
-  if (!sessions) {
-    sessions = new Set()
-    activatedSessions.set(hooks as object, sessions)
+})
+test("unrelated tasks, lifecycle events, and tools do not create council state", async t => {
+  const { guard } = fixture(t)
+  await before(guard, "ordinary", { prompt: "ordinary", subagent_type: "general" }, "ordinary")
+  await after(guard, "ordinary", "output", "child", "completed", "ordinary")
+  await event(guard, "ordinary", "running", "child", "", "ordinary")
+  await before(guard, "read", {}, "ordinary", "read")
+  assert.equal(guard.getState("ordinary"), undefined)
+})
+test("three distinct initial participants are admitted concurrently", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await Promise.all([1, 2, 3].map(p => before(guard, `call-${p}`, args(p))))
+  assert.deepEqual(guard.getState("parent")!.dispatches.map(d => [d.participant, d.agent, d.status]), AGENTS.map((agent, i) => [i + 1, agent, "active"]))
+})
+test("markers must be exact and on the first line", async t => {
+  assert.deepEqual(parseTaskDispatchMarker(args(2, 3, "retry").prompt), { purpose: "retry", participant: 2, round: 3, subagentType: AGENTS[1] })
+  assert.equal(parseTaskDispatchMarker(undefined), undefined)
+  for (const prompt of ["ordinary", " " + args(1).prompt, "[DEBATE_DISPATCH participant=1]"]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await assert.rejects(before(guard, "bad", { ...args(1), prompt }), /marker.*required|marker is malformed/)
+    assert.equal(guard.getState("parent")!.status, "aborted")
   }
-  sessions.add(sessionID)
-}
-
-function inferredParticipantTypes(args: Record<string, unknown>): ParticipantTypes {
-  const marker = typeof args.prompt === "string"
-    ? /^\[DEBATE_DISPATCH\s+purpose=\S+\s+participant=([1-3])\s+round=\S+\s+subagent_type=([^\s\]]+)/.exec(args.prompt)
-    : null
-  const participant = marker ? Number(marker[1]) - 1 : -1
-  const subagentType = typeof args.subagent_type === "string"
-    ? args.subagent_type
-    : marker?.[2]
-  if (participant < 0 || participant > 2 || !subagentType) return DEFAULT_PARTICIPANT_TYPES
-  const types = [...DEFAULT_PARTICIPANT_TYPES] as [string, string, string]
-  types[participant] = subagentType
-  return types
-}
-
-async function ensureActivated(
-  hooks: Awaited<ReturnType<typeof guardHooks>>,
-  sessionID: string,
-  participantTypes: ParticipantTypes = DEFAULT_PARTICIPANT_TYPES,
-) {
-  const sessions = activatedSessions.get(hooks as object)
-  if (sessions?.has(sessionID)) return
-  await activate(hooks, sessionID, participantTypes)
-}
-
-async function ordinaryTask(hooks: Awaited<ReturnType<typeof guardHooks>>, sessionID: string, callID: string) {
-  assert.ok(hooks["tool.execute.before"])
-  await hooks["tool.execute.before"](
-    { tool: "task", sessionID, callID },
-    { args: { description: "ordinary task", prompt: "ordinary task", subagent_type: "general" } },
-  )
-}
-
-async function before(
-  hooks: Awaited<ReturnType<typeof guardHooks>>,
-  sessionID: string,
-  callID: string,
-  args: Record<string, unknown>,
-) {
-  await ensureActivated(hooks, sessionID, inferredParticipantTypes(args))
-  assert.ok(hooks["tool.execute.before"])
-  await hooks["tool.execute.before"](
-    { tool: "task", sessionID, callID },
-    { args },
-  )
-}
-
-async function after(
-  hooks: Awaited<ReturnType<typeof guardHooks>>,
-  sessionID: string,
-  callID: string,
-  output = "participant output",
-  childSessionID = "child-1",
-) {
-  await ensureActivated(hooks, sessionID)
-  assert.ok(hooks["tool.execute.after"])
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID, callID, args: {} },
-    {
-      title: "task",
-      output: `<task id="${childSessionID}" state="completed">\n<task_result>\n${output}\n</task_result>\n</task>`,
-      metadata: { parentSessionId: sessionID, sessionId: childSessionID },
-    },
-  )
-}
-
-async function afterFailure(
-  hooks: Awaited<ReturnType<typeof guardHooks>>,
-  sessionID: string,
-  callID: string,
-  childSessionID = "child-1",
-) {
-  await ensureActivated(hooks, sessionID)
-  assert.ok(hooks["tool.execute.after"])
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID, callID, args: {} },
-    {
-      title: "task",
-      output: `<task id="${childSessionID}" state="error">\n<task_error>\nparticipant failed\n</task_error>\n</task>`,
-      metadata: { parentSessionId: sessionID, sessionId: childSessionID },
-    },
-  )
-}
-
-function lifecycleEvent(
-  sessionID: string,
-  callID: string,
-  status: "completed" | "error",
-  childSessionID = "child-1",
-) {
-  return {
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: `part-${callID}`,
-          sessionID,
-          messageID: `message-${callID}`,
-          type: "tool",
-          callID,
-          tool: "task",
-          state: status === "completed"
-            ? {
-                status,
-                input: {},
-                output: `<task id="${childSessionID}" state="completed">\n<task_result>\nparticipant output\n</task_result>\n</task>`,
-                title: "task",
-                metadata: { parentSessionId: sessionID, sessionId: childSessionID },
-                time: { start: 1, end: 2 },
-              }
-            : {
-                status,
-                input: {},
-                error: "<task_error>\nparticipant failed\n</task_error>",
-                metadata: { parentSessionId: sessionID, sessionId: childSessionID },
-                time: { start: 1, end: 2 },
-              },
-        },
-      },
-    },
-  } as never
-}
-
-function runningLifecycleEvent(
-  sessionID: string,
-  callID: string,
-  childSessionID: string,
-) {
-  return {
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: `part-${callID}-running`,
-          sessionID,
-          messageID: `message-${callID}`,
-          type: "tool",
-          callID,
-          tool: "task",
-          state: {
-            status: "running",
-            input: {},
-            output: `<task id="${childSessionID}" state="running">\n<task_result>\nstarted\n</task_result>\n</task>`,
-            title: "task",
-            metadata: { parentSessionId: sessionID, sessionId: childSessionID },
-            time: { start: 1 },
-          },
-        },
-      },
-    },
-  } as never
-}
-
-function terminalErrorWithoutMetadata(sessionID: string, callID: string) {
-  return {
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: `part-${callID}-error`,
-          sessionID,
-          messageID: `message-${callID}`,
-          type: "tool",
-          callID,
-          tool: "task",
-          state: {
-            status: "error",
-            input: {},
-            error: "<task_error>\nparticipant failed\n</task_error>",
-            title: "task",
-            time: { start: 1, end: 2 },
-          },
-        },
-      },
-    },
-  } as never
-}
-
-test("admits three distinct concurrent normal participant dispatches", async () => {
-  const hooks = await guardHooks()
-
-  await Promise.all([
-    before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" })),
-    before(hooks, "debate-1", "call-2", taskArgs("normal", 2, 1, { subagentType: "debate-two" })),
-    before(hooks, "debate-1", "call-3", taskArgs("normal", 3, 1, { subagentType: "debate-three" })),
-  ])
+})
+test("explicit task args and marker must match the resolved registry assignment", async t => {
+  for (const input of [{ ...args(1), subagent_type: null }, { ...args(1), subagent_type: "" }, { ...args(1), subagent_type: AGENTS[1] }, { ...args(1), prompt: args(2).prompt.replace("participant=2", "participant=1") }]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await assert.rejects(before(guard, "bad", input), /mapping mismatch/)
+    assert.equal(guard.getState("parent")!.dispatches.length, 0)
+  }
+})
+test("an omitted selector is filled only from a valid marker and the pinned registry", async t => {
+  const {guard}=fixture(t)
+  await activate(guard)
+  const input={...args(2),subagent_type:undefined as string | undefined}
+  await before(guard,"selector-default",input)
+  assert.equal(input.subagent_type,AGENTS[1])
+  assert.equal(guard.getState("parent")!.dispatches[0].agent,AGENTS[1])
+})
+test("duplicate registry assignments cannot create a valid run", async t => {
+  const { guard } = fixture(t, { registry: { ...REGISTRY, sets: { selected: [AGENTS[0], AGENTS[0], AGENTS[2]] } } })
+  await assert.rejects(activate(guard), /registry snapshot is corrupt/)
+})
+test("initial normal calls omit child IDs; continuation IDs cannot be invented or borrowed", async t => {
+  const first = fixture(t).guard
+  await activate(first)
+  await assert.rejects(before(first, "bad", args(1, 1, "normal", "child-1")), /must omit task_id/)
+  for (const child of [undefined, "arbitrary", "child-2"]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    for (const p of [1, 2, 3]) await turn(guard, p)
+    await assert.rejects(before(guard, "bad", args(1, 2, "normal", child)), /task_id continuity mismatch/)
+  }
+})
+test("duplicate call IDs retain one reservation and duplicate normal attempts abort", async t => {
+  const same = fixture(t).guard
+  await activate(same)
+  await before(same, "same", args(1))
+  await assert.rejects(before(same, "same", args(1)), /duplicate dispatch call ID/)
+  assert.equal(same.getState("parent")!.dispatches.length, 1)
+  for (const completed of [false, true]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await before(guard, "first", args(1))
+    if (completed) await after(guard, "first")
+    await assert.rejects(before(guard, "second", args(1)), /duplicate active|duplicate normal/)
+    assert.equal(guard.getState("parent")!.dispatches.length, 1)
+  }
+})
+test("duplicate commands cannot reset either active or completed-task budgets", async t => {
+  for (const completed of [false, true]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await before(guard, "first", args(1))
+    if (completed) await after(guard, "first")
+    await assert.rejects(activate(guard), /refusing budget reset/)
+    assert.equal(guard.getState("parent")!.dispatches.length, 1)
+  }
+})
+test("all three previous turns must be canonical before any next round", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  for (const p of [1, 2, 3]) { await before(guard, `first-${p}`, args(p)); await after(guard, `first-${p}`, '{"turn":"evidence"}', `child-${p}`) }
+  await format(guard, 1)
+  await format(guard, 2)
+  await assert.rejects(before(guard, "early", args(1, 2, "normal", "child-1")), /previous round is not fully canonical/)
+})
+test("runtime appends both actual canonical peers instead of trusting caller peer prose", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  for (const p of [1, 2, 3]) await turn(guard, p)
+  const input = args(1, 2, "normal", "child-1")
+  input.prompt += "\nUntrusted caller claims both peers agree."
+  await before(guard, "second", input)
+  const appended = JSON.parse(input.prompt.split("Verified previous-round peer turns (authoritative, appended by runtime):\n")[1])
+  assert.deepEqual(appended.other_participants, [2, 3].map(p => ({ participant: p, turn_response: { turn: `participant ${p} round 1` } })))
+})
+test("ready status does not authorize extension rounds", async t => {
+  const { guard } = fixture(t)
+  await activate(guard, "--rounds 1 Decision")
+  for (const p of [1, 2, 3]) await turn(guard, p)
+  assert.equal(guard.getState("parent")!.status, "ready")
+  await assert.rejects(before(guard, "extension", args(1, 2, "normal", "child-1")), /round limit exhausted/)
+})
+test("one retry follows a recorded failure and preserves participant child identity", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", "failed", "child-1", "error")
+  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+  await after(guard, "retry", '{"turn":"retry evidence"}')
+  assert.equal(JSON.parse(await format(guard, 1)).turn, "retry evidence")
+  assert.deepEqual(guard.getState("parent")!.dispatches.map(d => d.purpose), ["normal", "retry"])
+})
+test("retry before failure is forbidden and failure of the sole retry is terminal", async t => {
+  const initial = fixture(t).guard
+  await activate(initial)
+  await before(initial, "first", args(1))
+  await after(initial, "first")
+  await assert.rejects(before(initial, "retry", args(1, 1, "retry", "child-1")), /only one retry after a recorded task failure/)
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", "failed", "child-1", "error")
+  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+  await assert.rejects(after(guard, "retry", "failed", "child-1", "error"), /without an eligible retry/)
+  await assert.rejects(before(guard, "third", args(1, 1, "retry", "child-1")), /aborted/)
+  assert.equal(guard.getState("parent")!.dispatches.length, 2)
+})
+test("empty actual results are failures, and failures without child identity abort", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "empty", args(1))
+  await after(guard, "empty", "   ")
+  assert.equal(guard.getState("parent")!.dispatches[0].status, "failed")
+  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+  const unknown = fixture(t).guard
+  await activate(unknown)
+  await before(unknown, "first", args(1))
+  await assert.rejects(event(unknown, "first", "error"), /without an eligible retry/)
+})
+test("running envelopes stay active and metadata-free terminal errors retain known child IDs", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", "started", "child-1", "running")
+  assert.equal(guard.getState("parent")!.dispatches[0].status, "active")
+  await event(guard, "first", "error")
+  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+})
+test("duplicate same-ID lifecycle events cannot double charge or replace actual output", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await event(guard, "first", "running", "child-1")
+  await event(guard, "first", "running", "child-1")
+  await after(guard, "first", '{"turn":"original"}')
+  await event(guard, "first", "completed", "child-1", '{"turn":"replacement"}')
+  assert.equal(guard.getState("parent")!.dispatches.length, 1)
+  assert.equal(JSON.parse(await format(guard, 1)).turn, "original")
+})
+test("conflicting terminal events abort instead of overriding completed evidence", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first")
+  await assert.rejects(event(guard, "first", "error", "child-1"), /conflicting terminal task events/)
+  assert.equal(guard.getState("parent")!.status, "aborted")
+})
+test("a delayed original failure cannot demote a successful retry", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", "failed", "child-1", "error")
+  await before(guard, "retry", args(1, 1, "retry", "child-1"))
+  await after(guard, "retry")
+  await event(guard, "first", "error", "child-1")
+  assert.deepEqual(guard.getState("parent")!.dispatches.map(d => d.status), ["failed", "completed"])
+  await format(guard, 1)
+})
+test("child identities are write-once in both running metadata and completed envelopes", async t => {
+  for (const running of [true, false]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await before(guard, "first", args(1))
+    await event(guard, "first", "running", "child-1")
+    await assert.rejects(running ? event(guard, "first", "running", "child-other") : after(guard, "first", '{"turn":"evidence"}', "child-other"), /task_id changed|child.*mismatch|conflicting.*child/)
+    assert.equal(guard.getState("parent")!.dispatches[0].taskID, "child-1")
+    assert.equal(guard.getState("parent")!.status, "aborted")
+  }
+})
+test("task envelope ID must agree with child metadata", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await assert.rejects(guard.hooks["tool.execute.after"]!({ tool: "task", sessionID: "parent", callID: "first", args: {} }, {
+    title: "task", output: envelope("child-1", '{"turn":"evidence"}'), metadata: { sessionId: "child-other" },
+  }), /child session ID mismatch/)
+})
+test("formatter binds actual raw output, dispatch ID, and formatter ID; state contains no discussion text", async t => {
+  const { guard, store } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", '{"turn":"actual participant evidence"}')
+  const canonical = await format(guard, 1, 1, "format-actual", { response: '{"turn":"coordinator fabrication"}', schema: "round1" })
+  assert.equal(JSON.parse(canonical).turn, "actual participant evidence")
+  const state = guard.getState("parent")!
+  assert.deepEqual(state.validated["1:1"], { callID: "first", formatterCallID: "format-actual", digest: digest(canonical) })
+  assert.doesNotMatch(readFileSync(store.path(state.runId), "utf8"), /actual participant evidence|coordinator fabrication/)
+})
+test("formatter requires an admission and a completed actual task", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await assert.rejects(guard.formatter.execute({ participant: 1, round: 1 }, { sessionID: "parent" } as never), /admission is missing/)
+  await assert.rejects(format(guard, 1), /completed actual task/)
+})
+test("coordinator-supplied valid JSON cannot repair a malformed actual task result", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", '{"turn":42}')
+  await assert.rejects(format(guard, 1, 1, "f", { response: '{"turn":"fake valid"}' }), /turn|formatter/i)
+  assert.equal(guard.getState("parent")!.dispatches[0].formatFailed, true)
+  assert.deepEqual(guard.getState("parent")!.validated, {})
+})
+test("formatter correction requires actual validation failure and validates corrected participant output", async t => {
+  const unfailed = fixture(t).guard
+  await activate(unfailed)
+  await before(unfailed, "first", args(1))
+  await after(unfailed, "first")
+  await assert.rejects(before(unfailed, "correction", args(1, 1, "formatter-correction", "child-1")), /recorded validation failure/)
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", '{"turn":42}')
+  await assert.rejects(format(guard, 1), /turn|formatter/i)
+  await before(guard, "correction", args(1, 1, "formatter-correction", "child-1"))
+  await after(guard, "correction", '{"turn":"corrected actual evidence"}')
+  assert.equal(JSON.parse(await format(guard, 1)).turn, "corrected actual evidence")
+  assert.equal(guard.getState("parent")!.validated["1:1"].callID, "correction")
+})
+test("two formatter corrections consume budget and a third invalid result aborts", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await before(guard, `attempt-${attempt}`, args(1, 1, attempt ? "formatter-correction" : "normal", attempt ? "child-1" : undefined))
+    await after(guard, `attempt-${attempt}`, '{"turn":42}')
+    await assert.rejects(format(guard, 1, 1, `format-${attempt}`), /turn|formatter/i)
+  }
+  assert.equal(guard.getState("parent")!.status, "aborted")
+  assert.equal(guard.getState("parent")!.dispatches.length, 3)
+  await assert.rejects(before(guard, "third-correction", args(1, 1, "formatter-correction", "child-1")), /aborted/)
+})
+test("twelfth versus thirteenth concurrent admissions never exceed twelve tasks", async t => {
+  const { guard } = fixture(t)
+  await activate(guard, "--rounds 3 Decision")
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await before(guard, `p1-${attempt}`, args(1, 1, attempt ? "formatter-correction" : "normal", attempt ? "child-1" : undefined))
+    await after(guard, `p1-${attempt}`, attempt === 2 ? '{"turn":"correct"}' : '{"turn":42}')
+    if (attempt === 2) await format(guard, 1)
+    else await assert.rejects(format(guard, 1), /turn|formatter/i)
+  }
+  await before(guard, "p2-first", args(2))
+  await after(guard, "p2-first", "failed", "child-2", "error")
+  await before(guard, "p2-retry", args(2, 1, "retry", "child-2"))
+  await after(guard, "p2-retry", '{"turn":"correct"}', "child-2")
+  await format(guard, 2)
+  await turn(guard, 3)
+  for (const p of [1, 2, 3]) await turn(guard, p, 2)
+  await turn(guard, 1, 3)
+  await before(guard, "p2-r3", args(2, 3, "normal", "child-2"))
+  await after(guard, "p2-r3", '{"turn":42,"consensus_reached":false,"recommend_stopping":false}', "child-2")
+  await assert.rejects(format(guard, 2, 3), /turn|formatter/i)
+  assert.equal(guard.getState("parent")!.dispatches.length, 11)
+  const results = await Promise.allSettled([before(guard, "twelfth", args(3, 3, "normal", "child-3")), before(guard, "thirteenth", args(2, 3, "formatter-correction", "child-2"))])
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1)
+  assert.match(String((results.find(result => result.status === "rejected") as PromiseRejectedResult).reason), /dispatch budget exhausted/)
+  assert.equal(guard.getState("parent")!.dispatches.length, 12)
+  assert.equal(guard.getState("parent")!.status, "aborted")
+})
+test("forbidden coordinator tools abort without admitting tasks", async t => {
+  for (const tool of ["question", "persist_debate_transcript"]) {
+    const { guard } = fixture(t)
+    await activate(guard)
+    await assert.rejects(before(guard, "forbidden", {}, "parent", tool), /forbidden/)
+    assert.equal(guard.getState("parent")!.dispatches.length, 0)
+  }
+})
+test("clear, dispose, and session deletion cannot erase persistent budgets", async t => {
+  const { guard, directory } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await event(guard, "first", "running", "child-1")
+  for (const id of ["parent", "child-1"]) await guard.hooks.event!({ event: { type: "session.deleted", properties: { info: { id } } } } as never)
+  guard.clear()
+  const resumed = createTaskDispatchGuard({ registry: REGISTRY, store: new CouncilStateStore(directory), runId: "run-test" })
+  try { assert.equal(resumed.getState("parent")!.dispatches.length, 1); await assert.rejects(before(resumed, "duplicate", args(1)), /duplicate active/) }
+  finally { resumed.clear() }
+})
+test("abort remains terminal after reattachment and late running or completion events", async t => {
+  const { guard, directory } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await assert.rejects(before(guard, "bad", {}, "parent", "question"), /forbidden/)
+  const snapshot = guard.getState("parent")!
+  guard.clear()
+  const resumed = createTaskDispatchGuard({ registry: REGISTRY, store: new CouncilStateStore(directory), runId: "run-test" })
+  try {
+    await after(resumed, "first")
+    await event(resumed, "first", "running", "late-child")
+    assert.deepEqual(resumed.getState("parent"), snapshot)
+    await assert.rejects(before(resumed, "late", args(2)), /aborted/)
+  } finally { resumed.clear() }
+})
+test("deadline-expired terminal events cannot promote actual task evidence", async t => {
+  const { guard, store } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  store.update("run-test", state => { state.deadlineMs = Date.now() - 1 })
+  await assert.rejects(after(guard, "first"), /deadline/)
+  assert.equal(guard.getState("parent")!.status, "aborted")
+  assert.deepEqual(guard.getState("parent")!.validated, {})
+})
+test("abort requests cancellation of known active child sessions", async t => {
+  const cancelled: string[] = []
+  const { guard } = fixture(t, { cancelSession: async id => { cancelled.push(id) } })
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await event(guard, "first", "running", "child-1")
+  await assert.rejects(before(guard, "bad", {}, "parent", "question"), /forbidden/)
+  assert.deepEqual(cancelled, ["child-1"])
 })
 
-test("rejects a marked dispatch with omitted subagent_type", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1)),
-    /subagent_type.*required/i,
-  )
+test("premature root reports become deterministic abort text instead of advisory success", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  const output = await textComplete(guard, REPORT)
+  assert.match(output, /^## Council Abort/)
+  assert.match(output, /before every configured turn was canonical/)
+  assert.equal(guard.getState("parent")!.status, "aborted")
 })
 
-test("leaves ordinary unmarked task calls in unrelated sessions untouched", async () => {
-  const hooks = await guardHooks()
-
-  await ordinaryTask(hooks, "ordinary-session", "ordinary-call")
+test("participant JSON mentioning the report heading is not routed through the root report gate", async t => {
+  const {guard}=fixture(t)
+  await activate(guard)
+  await before(guard,"child-title",args(1))
+  await event(guard,"child-title","running","child-1")
+  const text=JSON.stringify({turn:"The final output must start with ## Council Report, not a synthesis."})
+  const output={text}
+  await guard.hooks["experimental.text.complete"]!({sessionID:"child-1",messageID:"child-message",partID:"child-part"},output)
+  assert.equal(output.text,text)
+  assert.equal(guard.getState("parent")!.status,"active")
+  await after(guard,"child-title",text,"child-1")
+  assert.equal(JSON.parse(await format(guard,1)).turn,JSON.parse(text).turn)
 })
 
-test("leaves ordinary task completion envelopes untouched in unrelated sessions", async () => {
-  const hooks = await guardHooks()
-  await ordinaryTask(hooks, "ordinary-session", "ordinary-call")
-  assert.ok(hooks["tool.execute.after"])
-
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID: "ordinary-session", callID: "ordinary-call", args: {} },
-    {
-      title: "task",
-      output: "<task id=\"ordinary-child\" state=\"completed\">\n<task_result>ordinary</task_result>\n</task>",
-      metadata: { sessionId: "different-child" },
-    },
-  )
+test("ready reports reject extra recommendation headings and missing or empty sections", async t => {
+  for (const report of [REPORT + "\n\n## Final recommendation\nAdopt it", REPORT.replace("Evidence for Risks", ""), REPORT.replace("### Agreements", "### Synthesis")]) {
+    const { guard } = fixture(t)
+    await activate(guard, "--rounds 1 Decision")
+    for (const p of [1, 2, 3]) await turn(guard, p)
+    assert.match(await textComplete(guard, report), /^## Council Abort/)
+    assert.equal(guard.getState("parent")!.status, "aborted")
+  }
 })
 
-test("enforces markers after the debate command activates its coordinator session", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "activated-session")
-
-  await assert.rejects(
-    ordinaryTask(hooks, "activated-session", "ordinary-call"),
-    /dispatch marker.*required/i,
-  )
+test("valid root report completion binds message and digest and is immutable after reattachment", async t => {
+  const { guard, directory } = fixture(t)
+  await activate(guard, "--rounds 1 Decision")
+  for (const p of [1, 2, 3]) await turn(guard, p)
+  assert.equal(await textComplete(guard, " \n" + REPORT + "\n "), REPORT)
+  const snapshot = guard.getState("parent")!
+  assert.equal(snapshot.status, "completed")
+  assert.equal(snapshot.reportMessageID, "final-message")
+  assert.equal(snapshot.reportDigest, digest(REPORT))
+  guard.clear()
+  const resumed = createTaskDispatchGuard({ registry: REGISTRY, store: new CouncilStateStore(directory), runId: "run-test" })
+  try {
+    assert.equal(await textComplete(resumed, REPORT), REPORT)
+    await assert.rejects(textComplete(resumed, REPORT, "different-message"), /already completed/)
+    await assert.rejects(textComplete(resumed, REPORT.replace("Evidence for Risks", "Changed risk")), /already completed/)
+    assert.deepEqual(resumed.getState("parent"), snapshot)
+  } finally { resumed.clear() }
 })
 
-test("does not register an invalid debate command as a coordinator session", async () => {
-  const hooks = await guardHooks()
-  assert.ok(hooks["command.execute.before"])
-  await hooks["command.execute.before"](
-    { command: "debate", sessionID: "invalid-session", arguments: "--bad" },
-    { parts: [{ type: "text", text: "The /debate command arguments are invalid." }] } as never,
-  )
-  await ordinaryTask(hooks, "invalid-session", "ordinary-call")
-})
-
-test("requires round one normal dispatches to omit task_id", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one", taskId: "child-1" })),
-    /round 1.*omit|task_id.*round 1/i,
-  )
-})
-
-test("rejects a task dispatch without a structured marker", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    before(hooks, "debate-1", "call-1", {
-      description: "Participant 1",
-      prompt: "Return the participant response.",
-      subagent_type: "debate-one",
-    }),
-    /dispatch marker.*required/i,
-  )
-})
-
-test("rejects a marker that is not exact at the start of the first line", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    before(hooks, "debate-1", "call-1", {
-      description: "Participant 1",
-      prompt: "  [DEBATE_DISPATCH purpose=normal participant=1 round=1 subagent_type=debate-one]\nReturn the participant response.",
-      subagent_type: "debate-one",
-    }),
-    /dispatch marker.*required|malformed/i,
-  )
-})
-
-test("rejects a subagent_type that mismatches the structured marker", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    (async () => {
-      await activate(hooks, "debate-1")
-      await hooks["tool.execute.before"]?.(
-        { tool: "task", sessionID: "debate-1", callID: "call-1" },
-        { args: taskArgs("normal", 1, 1, { subagentType: "debate-two", markerSubagentType: "debate-one" }) },
-      )
-    })(),
-    /subagent_type.*mismatch/i,
-  )
-})
-
-test("rejects a conflicting round-one assignment after the established attempt fails", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "debate-round-one-type", ["registry-alpha", "debate-two", "debate-three"])
-
-  await before(hooks, "debate-round-one-type", "normal", taskArgs("normal", 1, 1, { subagentType: "registry-alpha" }))
-  await afterFailure(hooks, "debate-round-one-type", "normal", "child-round-one-type")
-
-  await assert.rejects(
-    before(hooks, "debate-round-one-type", "conflict", taskArgs("normal", 1, 1, { subagentType: "registry-beta" })),
-    /subagent_type.*established/i,
-  )
-})
-
-test("rejects duplicate active normal dispatches", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "call-1", args)
-  await assert.rejects(
-    before(hooks, "debate-1", "call-2", args),
-    /duplicate active|already active/i,
-  )
-})
-
-test("rejects duplicate completed normal dispatches", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "call-1", args)
-  await after(hooks, "debate-1", "call-1")
-  await assert.rejects(
-    before(hooks, "debate-1", "call-2", args),
-    /duplicate completed|already completed/i,
-  )
-})
-
-test("resets completed dispatch state when a second debate starts in the same session", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "same-session", "first", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "same-session", "first", "first debate output", "first-child")
-  await activate(hooks, "same-session")
-
-  await before(hooks, "same-session", "second", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-})
-
-test("does not reset an in-flight debate when a duplicate command starts", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "in-flight-command", "first", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await assert.rejects(
-    activate(hooks, "in-flight-command"),
-    /in.?flight|active dispatch/i,
-  )
-  await assert.rejects(
-    before(hooks, "in-flight-command", "duplicate", taskArgs("normal", 1, 1, { subagentType: "debate-one" })),
-    /duplicate active|already active/i,
-  )
-})
-
-test("admits the next eligible normal round after completion", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-1", "call-1")
-  await before(hooks, "debate-1", "call-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-1" }))
-})
-
-test("rejects a changed subagent_type on a later normal round", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "debate-later-type", ["registry-alpha", "debate-two", "debate-three"])
-
-  await before(hooks, "debate-later-type", "round-1", taskArgs("normal", 1, 1, { subagentType: "registry-alpha" }))
-  await after(hooks, "debate-later-type", "round-1", "participant output", "child-later-type")
-
-  await assert.rejects(
-    before(hooks, "debate-later-type", "round-2", taskArgs("normal", 1, 2, { subagentType: "registry-beta", taskId: "child-later-type" })),
-    /subagent_type.*established/i,
-  )
-})
-
-test("rejects a wrong first-round assignment against the resolved participant mapping", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "authoritative-mapping", ["configured-one", "configured-two", "configured-three"])
-
-  await assert.rejects(
-    before(hooks, "authoritative-mapping", "wrong-first", taskArgs("normal", 1, 1, { subagentType: "wrong-agent" })),
-    /configured|resolved|participant type/i,
-  )
-})
-
-test("rejects duplicate configured agent assignments in the resolved mapping", async () => {
-  const hooks = await guardHooks()
-
-  await assert.rejects(
-    activate(hooks, "duplicate-mapping", ["same-agent", "same-agent", "third-agent"]),
-    /distinct|duplicate|assigned/i,
-  )
-})
-
-test("rejects a round two normal dispatch with a missing task_id", async () => {
-  const hooks = await guardHooks()
-  await before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-1", "call-1", "participant output", "child-1")
-
-  await assert.rejects(
-    before(hooks, "debate-1", "call-2", taskArgs("normal", 1, 2, { subagentType: "debate-one" })),
-    /task_id.*required|requires task_id|child session/i,
-  )
-})
-
-test("rejects arbitrary and cross-participant task_id values on continuation", async () => {
-  const hooks = await guardHooks()
-  await before(hooks, "debate-1", "p1-r1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-1", "p1-r1", "participant output", "child-one")
-  await before(hooks, "debate-1", "p2-r1", taskArgs("normal", 2, 1, { subagentType: "debate-two" }))
-  await after(hooks, "debate-1", "p2-r1", "participant output", "child-two")
-
-  await assert.rejects(
-    before(hooks, "debate-1", "p1-bad", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "arbitrary" })),
-    /task_id.*mismatch|child session|next eligible/i,
-  )
-  await assert.rejects(
-    before(hooks, "debate-1", "p1-cross", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-two" })),
-    /task_id.*mismatch|child session|next eligible/i,
-  )
-})
-
-test("admits one retry only after a recorded task failure", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await hooks.event?.(lifecycleEvent("debate-1", "call-1", "error"))
-  await before(hooks, "debate-1", "call-2", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-1" }))
-  await assert.rejects(
-    before(hooks, "debate-1", "call-3", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-1" })),
-    /retry.*active|duplicate/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-1", "call-2", "completed"))
-  await assert.rejects(
-    before(hooks, "debate-1", "call-4", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-1" })),
-    /retry.*completed|already completed|only one/i,
-  )
-})
-
-test("rejects a changed subagent_type on a retry", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "debate-retry-type", ["registry-alpha", "debate-two", "debate-three"])
-
-  await before(hooks, "debate-retry-type", "normal", taskArgs("normal", 1, 1, { subagentType: "registry-alpha" }))
-  await afterFailure(hooks, "debate-retry-type", "normal", "child-retry-type")
-
-  await assert.rejects(
-    before(hooks, "debate-retry-type", "retry", taskArgs("retry", 1, 1, { subagentType: "registry-beta", taskId: "child-retry-type" })),
-    /subagent_type.*established/i,
-  )
-})
-
-test("records an empty task result as a failure eligible for one retry", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-empty", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-empty", "call-1", "", "child-empty")
-  await before(hooks, "debate-empty", "call-2", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-empty" }))
-})
-
-test("authoritative task errors override an optimistic non-empty after result", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-error", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-error", "call-1", "participant output", "child-error")
-  await hooks.event?.(lifecycleEvent("debate-error", "call-1", "error", "child-error"))
-  await before(hooks, "debate-error", "call-2", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-error" }))
-})
-
-test("does not admit continuation until the child session is identified", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-deferred", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  assert.ok(hooks["tool.execute.after"])
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID: "debate-deferred", callID: "call-1", args: {} },
-    { title: "task", output: "unstructured wrapper output", metadata: {} },
-  )
-  await assert.rejects(
-    before(hooks, "debate-deferred", "call-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "unknown" })),
-    /task_id.*mismatch|child session|next eligible/i,
-  )
-})
-
-test("recognises a task error envelope from tool.execute.after", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-error-envelope", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  assert.ok(hooks["tool.execute.after"])
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID: "debate-error-envelope", callID: "call-1", args: {} },
-    {
-      title: "task",
-      output: "<task id=\"child-error-envelope\" state=\"error\">\n<task_error>\nfailed\n</task_error>\n</task>",
-      metadata: { parentSessionId: "debate-error-envelope", sessionId: "child-error-envelope" },
-    },
-  )
-  await before(hooks, "debate-error-envelope", "call-2", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-error-envelope" }))
-})
-
-test("keeps a running task active until its terminal lifecycle event", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-running", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  assert.ok(hooks["tool.execute.after"])
-  await hooks["tool.execute.after"](
-    { tool: "task", sessionID: "debate-running", callID: "call-1", args: {} },
-    {
-      title: "task",
-      output: "<task id=\"child-running\" state=\"running\">\n<task_result>\nstarted\n</task_result>\n</task>",
-      metadata: { parentSessionId: "debate-running", sessionId: "child-running" },
-    },
-  )
-  await assert.rejects(
-    before(hooks, "debate-running", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-running" })),
-    /active|requires.*failure/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-running", "call-1", "completed", "child-running"))
-  await before(hooks, "debate-running", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-running" }))
-})
-
-test("retains a running event child ID for a metadata-free terminal retry", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-running-event", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await hooks.event?.(runningLifecycleEvent("debate-running-event", "normal", "child-running-event"))
-  await hooks.event?.(terminalErrorWithoutMetadata("debate-running-event", "normal"))
-
-  await assert.rejects(
-    before(hooks, "debate-running-event", "wrong-retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "wrong-child" })),
-    /task_id.*mismatch|child session/i,
-  )
-  await before(hooks, "debate-running-event", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-running-event" }))
-})
-
-test("ignores running task events from unrelated sessions and calls", async () => {
-  const hooks = await guardHooks()
-
-  await activate(hooks, "coordinator-with-untracked-call")
-
-  await hooks.event?.({
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "untracked-part",
-          sessionID: "coordinator-with-untracked-call",
-          messageID: "untracked-message",
-          type: "tool",
-          callID: "untracked-call",
-          tool: "task",
-          state: {
-            status: "running",
-            input: {},
-            metadata: { sessionId: "metadata-child" },
-            title: "task",
-            time: { start: 1 },
-          },
-        },
-      },
-    },
-  } as never)
-
-  await hooks.event?.({
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "unrelated-part",
-          sessionID: "unrelated-session",
-          messageID: "unrelated-message",
-          type: "tool",
-          callID: "unrelated-call",
-          tool: "task",
-          state: {
-            status: "running",
-            input: {},
-            output: "not a task envelope",
-            metadata: { sessionId: "metadata-child" },
-            title: "task",
-            time: { start: 1 },
-          },
-        },
-      },
-    },
-  } as never)
-
-  await before(
-    hooks,
-    "coordinator-with-untracked-call",
-    "untracked-call",
-    taskArgs("normal", 1, 1, { subagentType: "debate-one" }),
-  )
-})
-
-test("rejects a conflicting running child ID without permitting the conflicting retry", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-write-once-running", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  assert.ok(hooks.event)
-  await hooks.event?.(runningLifecycleEvent("debate-write-once-running", "normal", "child-a"))
-  await assert.rejects(
-    hooks.event?.(runningLifecycleEvent("debate-write-once-running", "normal", "child-b")),
-    /child session.*(?:already|mismatch|conflict)/i,
-  )
-  await hooks.event?.(terminalErrorWithoutMetadata("debate-write-once-running", "normal"))
-
-  await assert.rejects(
-    before(hooks, "debate-write-once-running", "wrong-retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-b" })),
-    /task_id.*mismatch|child session/i,
-  )
-  await before(hooks, "debate-write-once-running", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-a" }))
-})
-
-test("keeps an admission-time child ID write-once for a resumed normal attempt", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-write-once-normal", "round-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-write-once-normal", "round-1", "participant output", "child-a")
-  await before(hooks, "debate-write-once-normal", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-a" }))
-  assert.ok(hooks.event)
-  await assert.rejects(
-    hooks.event?.(lifecycleEvent("debate-write-once-normal", "round-2", "completed", "child-b")),
-    /child session.*(?:already|mismatch|conflict)/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-write-once-normal", "round-2", "completed", "child-a"))
-
-  await assert.rejects(
-    before(hooks, "debate-write-once-normal", "round-3-wrong", taskArgs("normal", 1, 3, { subagentType: "debate-one", taskId: "child-b" })),
-    /task_id.*mismatch|child session/i,
-  )
-  await before(hooks, "debate-write-once-normal", "round-3", taskArgs("normal", 1, 3, { subagentType: "debate-one", taskId: "child-a" }))
-})
-
-test("keeps an admission-time child ID write-once for a resumed retry attempt", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-write-once-retry", "round-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await afterFailure(hooks, "debate-write-once-retry", "round-1", "child-a")
-  await before(hooks, "debate-write-once-retry", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-a" }))
-  assert.ok(hooks.event)
-  await assert.rejects(
-    hooks.event?.(lifecycleEvent("debate-write-once-retry", "retry", "completed", "child-b")),
-    /child session.*(?:already|mismatch|conflict)/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-write-once-retry", "retry", "completed", "child-a"))
-
-  await assert.rejects(
-    before(hooks, "debate-write-once-retry", "round-2-wrong", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-b" })),
-    /task_id.*mismatch|child session/i,
-  )
-  await before(hooks, "debate-write-once-retry", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-a" }))
-})
-
-test("keeps an admission-time child ID write-once for a resumed formatter correction", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-write-once-correction", "round-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-write-once-correction", "round-1", "participant output", "child-a")
-  await before(hooks, "debate-write-once-correction", "correction-1", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-a" }))
-  assert.ok(hooks.event)
-  await assert.rejects(
-    hooks.event?.(lifecycleEvent("debate-write-once-correction", "correction-1", "completed", "child-b")),
-    /child session.*(?:already|mismatch|conflict)/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-write-once-correction", "correction-1", "completed", "child-a"))
-
-  await assert.rejects(
-    before(hooks, "debate-write-once-correction", "correction-2-wrong", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-b" })),
-    /task_id.*mismatch|child session/i,
-  )
-  await before(hooks, "debate-write-once-correction", "correction-2", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-a" }))
-})
-
-test("accepts repeated same-ID running and terminal lifecycle metadata", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-write-once-idempotent", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await hooks.event?.(runningLifecycleEvent("debate-write-once-idempotent", "normal", "child-a"))
-  await hooks.event?.(runningLifecycleEvent("debate-write-once-idempotent", "normal", "child-a"))
-  await after(hooks, "debate-write-once-idempotent", "normal", "participant output", "child-a")
-  await hooks.event?.(lifecycleEvent("debate-write-once-idempotent", "normal", "completed", "child-a"))
-  await hooks.event?.(lifecycleEvent("debate-write-once-idempotent", "normal", "completed", "child-a"))
-
-  await before(hooks, "debate-write-once-idempotent", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-a" }))
-})
-
-test("delayed original failure cannot demote a successful retry", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-retry-authority", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await afterFailure(hooks, "debate-retry-authority", "normal", "child-retry-authority")
-  await before(hooks, "debate-retry-authority", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-retry-authority" }))
-  await after(hooks, "debate-retry-authority", "retry", "retry output", "child-retry-authority")
-  await hooks.event?.(lifecycleEvent("debate-retry-authority", "normal", "error", "child-retry-authority"))
-
-  await before(hooks, "debate-retry-authority", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-retry-authority" }))
-})
-
-test("delayed original terminal events cannot reopen a failed retry", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-retry-failed", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await afterFailure(hooks, "debate-retry-failed", "normal", "child-retry-failed")
-  await before(hooks, "debate-retry-failed", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-retry-failed" }))
-  await hooks.event?.(lifecycleEvent("debate-retry-failed", "retry", "error", "child-retry-failed"))
-  await hooks.event?.(lifecycleEvent("debate-retry-failed", "normal", "completed", "child-retry-failed"))
-  await hooks.event?.(lifecycleEvent("debate-retry-failed", "normal", "error", "child-retry-failed"))
-
-  await assert.rejects(
-    before(hooks, "debate-retry-failed", "retry-2", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-retry-failed" })),
-    /retry.*completed|already completed|only one/i,
-  )
-  await assert.rejects(
-    before(hooks, "debate-retry-failed", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-retry-failed" })),
-    /normal dispatch failed|next eligible|task_id/i,
-  )
-})
-
-test("authoritative retry error blocks continuation after an optimistic retry success", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-retry-error", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await afterFailure(hooks, "debate-retry-error", "normal", "child-retry-error")
-  await before(hooks, "debate-retry-error", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-retry-error" }))
-  await after(hooks, "debate-retry-error", "retry", "retry output", "child-retry-error")
-  await hooks.event?.(lifecycleEvent("debate-retry-error", "retry", "error", "child-retry-error"))
-
-  await assert.rejects(
-    before(hooks, "debate-retry-error", "round-2", taskArgs("normal", 1, 2, { subagentType: "debate-one", taskId: "child-retry-error" })),
-    /normal dispatch failed|next eligible|task_id/i,
-  )
-})
-
-test("treats an empty completed lifecycle envelope as a failure", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-empty-event", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await hooks.event?.({
-    event: {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "part-empty-event",
-          sessionID: "debate-empty-event",
-          messageID: "message-empty-event",
-          type: "tool",
-          callID: "call-1",
-          tool: "task",
-          state: {
-            status: "completed",
-            input: {},
-            output: "<task id=\"child-empty-event\" state=\"completed\">\n<task_result>\n\n</task_result>\n</task>",
-            title: "task",
-            metadata: { sessionId: "child-empty-event" },
-            time: { start: 1, end: 2 },
-          },
-        },
-      },
-    },
-  } as never)
-  await before(hooks, "debate-empty-event", "retry", taskArgs("retry", 1, 1, { subagentType: "debate-one", taskId: "child-empty-event" }))
-})
-
-test("admits formatter semantic correction without duplicating the normal dispatch", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-1", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await hooks.event?.(lifecycleEvent("debate-1", "call-1", "completed"))
-  await before(hooks, "debate-1", "call-2", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-1" }))
-  await assert.rejects(
-    before(hooks, "debate-1", "call-3", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-1" })),
-    /correction.*active|duplicate/i,
-  )
-  await hooks.event?.(lifecycleEvent("debate-1", "call-2", "completed"))
-})
-
-test("rejects a changed subagent_type on a formatter correction", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "debate-correction-type", ["registry-alpha", "debate-two", "debate-three"])
-
-  await before(hooks, "debate-correction-type", "normal", taskArgs("normal", 1, 1, { subagentType: "registry-alpha" }))
-  await after(hooks, "debate-correction-type", "normal", "participant output", "child-correction-type")
-
-  await assert.rejects(
-    before(hooks, "debate-correction-type", "correction", taskArgs("formatter-correction", 1, 1, { subagentType: "registry-beta", taskId: "child-correction-type" })),
-    /subagent_type.*established/i,
-  )
-})
-
-test("allows another formatter correction after a completed correction", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-repeat", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-repeat", "normal", "participant output", "child-repeat")
-  await before(hooks, "debate-repeat", "correction-1", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-repeat" }))
-  await hooks.event?.(lifecycleEvent("debate-repeat", "correction-1", "completed", "child-repeat"))
-  await before(hooks, "debate-repeat", "correction-2", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-repeat" }))
-})
-
-test("allows another formatter correction after a failed correction", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-repeat-failed", "normal", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-repeat-failed", "normal", "participant output", "child-repeat-failed")
-  await before(hooks, "debate-repeat-failed", "correction-1", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-repeat-failed" }))
-  await hooks.event?.(lifecycleEvent("debate-repeat-failed", "correction-1", "error", "child-repeat-failed"))
-  await before(hooks, "debate-repeat-failed", "correction-2", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-repeat-failed" }))
-})
-
-test("formatter correction does not consume the normal dispatch slot", async () => {
-  const hooks = await guardHooks()
-
-  await before(hooks, "debate-correction", "call-1", taskArgs("normal", 1, 1, { subagentType: "debate-one" }))
-  await after(hooks, "debate-correction", "call-1", "participant output", "child-correction")
-  await before(hooks, "debate-correction", "call-2", taskArgs("formatter-correction", 1, 1, { subagentType: "debate-one", taskId: "child-correction" }))
-  await hooks.event?.(lifecycleEvent("debate-correction", "call-2", "completed", "child-correction"))
-  await assert.rejects(
-    before(hooks, "debate-correction", "call-3", taskArgs("normal", 1, 1, { subagentType: "debate-one" })),
-    /duplicate completed/i,
-  )
-})
-
-test("keeps dispatch state independent between debates", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "call-1", args)
-  await before(hooks, "debate-2", "call-2", args)
-})
-
-test("allows independent debates to establish different participant subagent types", async () => {
-  const hooks = await guardHooks()
-  await activate(hooks, "debate-type-a", ["registry-alpha", "debate-two", "debate-three"])
-  await activate(hooks, "debate-type-b", ["registry-beta", "debate-two", "debate-three"])
-
-  await before(hooks, "debate-type-a", "call-1", taskArgs("normal", 1, 1, { subagentType: "registry-alpha" }))
-  await before(hooks, "debate-type-b", "call-2", taskArgs("normal", 1, 1, { subagentType: "registry-beta" }))
-})
-
-test("scopes lifecycle call IDs to their parent debate session", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "same-call-id", args)
-  await before(hooks, "debate-2", "same-call-id", args)
-})
-
-test("clears a deleted session before admitting a new first round", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "call-1", args)
-  await hooks.event?.({
-    event: {
-      type: "session.deleted",
-      properties: { info: { id: "debate-1" } },
-    },
-  } as never)
-  activatedSessions.get(hooks as object)?.delete("debate-1")
-  await before(hooks, "debate-1", "call-2", args)
-})
-
-test("clears participant round state when its child session is deleted", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-child-delete", "call-1", args)
-  await after(hooks, "debate-child-delete", "call-1", "participant output", "child-deleted")
-  await hooks.event?.({
-    event: {
-      type: "session.deleted",
-      properties: { info: { id: "child-deleted" } },
-    },
-  } as never)
-  await before(hooks, "debate-child-delete", "call-2", args)
-})
-
-test("clears all dispatch state when the plugin is disposed", async () => {
-  const hooks = await guardHooks()
-  const args = taskArgs("normal", 1, 1, { subagentType: "debate-one" })
-
-  await before(hooks, "debate-1", "call-1", args)
-  await hooks.dispose?.()
-  activatedSessions.get(hooks as object)?.clear()
-  await before(hooks, "debate-1", "call-2", args)
-})
-
-test("ignores unrelated tool lifecycle hooks", async () => {
-  const hooks = await guardHooks()
-  assert.ok(hooks["tool.execute.before"])
-  assert.ok(hooks["tool.execute.after"])
-
-  await hooks["tool.execute.before"](
-    { tool: "question", sessionID: "debate-1", callID: "question-1" },
-    { args: { prompt: "Question" } },
-  )
-  await hooks["tool.execute.after"](
-    { tool: "question", sessionID: "debate-1", callID: "question-1", args: {} },
-    { title: "question", output: "answer", metadata: {} },
-  )
+test("reattachment hydrates only digest-matching actual task and canonical peer evidence", async t => {
+  for (const corrupt of [false, true]) {
+    const { guard, directory } = fixture(t)
+    await activate(guard)
+    const parts: any[] = []
+    for (const p of [1, 2, 3]) {
+      const canonical = await turn(guard, p)
+      parts.push({ type: "tool", tool: "task", callID: `normal-${p}-1`, state: { status: "completed", output: envelope(`child-${p}`, JSON.stringify({ turn: `participant ${p} round 1` })), metadata: { sessionId: `child-${p}` } } })
+      parts.push({ type: "tool", tool: "format_debate_response", callID: `format-${p}-1`, state: { status: "completed", output: corrupt && p === 2 ? '{"turn":"substituted evidence"}' : canonical } })
+    }
+    guard.clear()
+    const resumed = createTaskDispatchGuard({ registry: REGISTRY, store: new CouncilStateStore(directory), runId: "run-test", loadMessages: async () => [{ info: { id: "history", role: "assistant" }, parts }] })
+    try {
+      const input = args(1, 2, "normal", "child-1")
+      if (corrupt) await assert.rejects(before(resumed, "resumed-round2", input), /canonical peer evidence unavailable/)
+      else { await before(resumed, "resumed-round2", input); assert.match(input.prompt, /participant 2 round 1/); assert.match(input.prompt, /participant 3 round 1/) }
+    } finally { resumed.clear() }
+  }
 })

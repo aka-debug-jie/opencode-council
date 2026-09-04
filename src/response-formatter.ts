@@ -33,8 +33,10 @@ export function limitCanonicalTurn(canonical: string): string {
     throw new Error("Formatter returned canonical JSON without a turn string")
   }
   const response = parsed as { turn: string }
-  if (response.turn.length <= COUNCIL_LIMITS.maxTurnChars) return canonical
-  response.turn = `${response.turn.slice(0, COUNCIL_LIMITS.maxTurnChars)}\n\n[Truncated by council safety limit]`
+  const codepoints = Array.from(response.turn)
+  if (codepoints.length <= COUNCIL_LIMITS.maxTurnChars) return canonical
+  const marker = "\n\n[Truncated by council safety limit]"
+  response.turn = codepoints.slice(0, COUNCIL_LIMITS.maxTurnChars - Array.from(marker).length).join("") + marker
   return JSON.stringify(parsed)
 }
 

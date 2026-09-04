@@ -1,6 +1,9 @@
-import { test } from "node:test"
+import { test, type TestContext } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { CouncilStateStore } from "../src/council-state.ts"
 import type { Part } from "@opencode-ai/sdk"
 import {
   createDebatePlugin,
@@ -41,15 +44,28 @@ const DYNAMIC_REGISTRY: DebateRegistry = {
     default: ["one", "two", "three"],
     custom: ["four", "five", "six"],
   },
-  continuationBySet: {
-    default: "ask",
-    custom: "discretion",
-  },
   defaultSet: "custom",
+}
+
+
+function isolatedStore(t: TestContext): CouncilStateStore {
+  const directory = mkdtempSync(join(tmpdir(), "council-contract-"))
+  const store = new CouncilStateStore(directory)
+  t.after(() => { store.dispose(); rmSync(directory, { recursive: true, force: true }) })
+  return store
 }
 
 test("default rounds when --rounds absent", () => {
   const r = parseDebateArguments("compare two options")
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.equal(r.rounds, 2)
+    assert.equal(r.topic, "compare two options")
+  }
+})
+
+test("--rounds sets the round count", () => {
+  const r = parseDebateArguments("--rounds 3 compare two options")
   assert.equal(r.ok, true)
   if (r.ok) {
     assert.equal(r.rounds, 3)
@@ -57,20 +73,11 @@ test("default rounds when --rounds absent", () => {
   }
 })
 
-test("--rounds sets the round count", () => {
-  const r = parseDebateArguments("--rounds 5 compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.rounds, 5)
-    assert.equal(r.topic, "compare two options")
-  }
-})
-
 test("--rounds=N equals syntax", () => {
-  const r = parseDebateArguments("--rounds=5 compare two options")
+  const r = parseDebateArguments("--rounds=3 compare two options")
   assert.equal(r.ok, true)
   if (r.ok) {
-    assert.equal(r.rounds, 5)
+    assert.equal(r.rounds, 3)
     assert.equal(r.topic, "compare two options")
   }
 })
@@ -80,20 +87,29 @@ test("empty topic is valid with default rounds", () => {
   assert.equal(r.ok, true)
   if (r.ok) {
     assert.equal(r.topic, "")
-    assert.equal(r.rounds, 3)
+    assert.equal(r.rounds, 2)
   }
 })
 
 test("--rounds 0 is rejected", () => {
   const r = parseDebateArguments("--rounds 0 topic")
   assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /positive integer/)
+  if (!r.ok) assert.match(r.error, /integer between 1 and 3/)
 })
 
 test("--rounds above the cap is rejected", () => {
-  const r = parseDebateArguments("--rounds 11 topic")
+  const r = parseDebateArguments("--rounds 4 topic")
   assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /between 1 and 10/)
+  if (!r.ok) assert.match(r.error, /between 1 and 3/)
+})
+
+test("rounds accepts the lower boundary and rejects fractional, empty and nonnumeric values", () => {
+  assert.deepEqual(parseDebateArguments("--rounds 1 topic"), { ok: true, topic: "topic", rounds: 1 })
+  for (const value of ["1.5", "", "NaN", "abc"]) {
+    const result = parseDebateArguments(`--rounds=${value} topic`)
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /integer between 1 and 3/)
+  }
 })
 
 test("--rounds with a huge digit string is rejected (safe integer guard)", () => {
@@ -104,11 +120,11 @@ test("--rounds with a huge digit string is rejected (safe integer guard)", () =>
 test("--rounds without a value is rejected", () => {
   const r = parseDebateArguments("--rounds")
   assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /positive integer/)
+  if (!r.ok) assert.match(r.error, /integer between 1 and 3/)
 })
 
 test("duplicate --rounds is rejected", () => {
-  const r = parseDebateArguments("--rounds 2 --rounds 5 topic")
+  const r = parseDebateArguments("--rounds 2 --rounds 3 topic")
   assert.equal(r.ok, false)
   if (!r.ok) assert.match(r.error, /only be specified once/)
 })
@@ -124,225 +140,50 @@ test("unknown option is rejected", () => {
   if (!r.ok) assert.match(r.error, /Unsupported option/)
 })
 
-test("default set when --set absent", () => {
-  const r = parseDebateArguments("compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.set, "default")
-    assert.equal(r.topic, "compare two options")
-  }
-})
 
-test("--set:cheap sets the participant set", () => {
-  const r = parseDebateArguments("--set:cheap compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.set, "cheap")
-    assert.equal(r.topic, "compare two options")
-    assert.equal(r.rounds, 3)
-  }
-})
-
-test("--set:default sets the set explicitly", () => {
-  const r = parseDebateArguments("--set:default compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) assert.equal(r.set, "default")
-})
-
-test("--set:cheap combines with --rounds", () => {
-  const r = parseDebateArguments("--rounds 5 --set:cheap compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.rounds, 5)
-    assert.equal(r.set, "cheap")
-    assert.equal(r.topic, "compare two options")
-  }
-})
-
-test("--set order does not matter", () => {
-  const r = parseDebateArguments("--set:cheap --rounds 5 compare two options")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.rounds, 5)
-    assert.equal(r.set, "cheap")
-  }
-})
-
-test("unknown --set value is rejected", () => {
-  const r = parseDebateArguments("--set:fast compare two options")
-  assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /Unsupported --set value/)
-})
-
-test("configured set names are accepted dynamically", () => {
-  const result = parseDebateArguments("--set:custom compare two options", DYNAMIC_REGISTRY)
-
-  assert.deepEqual(result, {
-    ok: true,
-    topic: "compare two options",
-    rounds: 3,
-    set: "custom",
+for (const flag of ["--set", "--set:", "--set:cheap", "--set:default", "--set:custom", "--set:toString", "--ask", "--discretion"]) {
+  test(flag + " is rejected even with configured set mappings", () => {
+    const result = parseDebateArguments(flag + " topic", DYNAMIC_REGISTRY)
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /Unsupported option/)
   })
+}
+
+test("parsed output contains only topic and bounded rounds", () => {
+  assert.deepEqual(parseDebateArguments("topic", DYNAMIC_REGISTRY), { ok: true, topic: "topic", rounds: 2 })
 })
 
-test("set errors list the dynamically configured choices", () => {
-  const result = parseDebateArguments("--set:missing compare two options", DYNAMIC_REGISTRY)
-
-  assert.equal(result.ok, false)
-  if (!result.ok) {
-    assert.match(result.error, /--set:default/)
-    assert.match(result.error, /--set:custom/)
-    assert.doesNotMatch(result.error, /--set:cheap/)
+test("set-like text after topic or separator remains literal topic text", () => {
+  for (const [input, topic] of [["review --set:cheap", "review --set:cheap"], ["-- --set:cheap", "--set:cheap"]]) {
+    assert.deepEqual(parseDebateArguments(input), { ok: true, topic, rounds: 2 })
   }
 })
 
-test("inherited object properties are not accepted as configured sets", () => {
-  const result = parseDebateArguments("--set:toString compare two options", DYNAMIC_REGISTRY)
-
-  assert.equal(result.ok, false)
-  if (!result.ok) assert.match(result.error, /Unsupported --set value/)
-})
-
-test("configured default set is used when --set is absent", () => {
-  assert.deepEqual(parseDebateArguments("compare two options", DYNAMIC_REGISTRY), {
-    ok: true,
-    topic: "compare two options",
-    rounds: 3,
-    set: "custom",
-  })
-})
-
-test("empty --set value is rejected", () => {
-  const r = parseDebateArguments("--set: compare two options")
-  assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /--set requires a value/)
-})
-
-test("bare --set is rejected as an unsupported option", () => {
-  const r = parseDebateArguments("--set compare two options")
-  assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /Unsupported option/)
-})
-
-test("duplicate --set is rejected", () => {
-  const r = parseDebateArguments("--set:cheap --set:default compare two options")
-  assert.equal(r.ok, false)
-  if (!r.ok) assert.match(r.error, /only be specified once/)
-})
-
-test("--set after the first topic token is part of the topic", () => {
-  const r = parseDebateArguments("review --set:cheap in the topic")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.set, "default")
-    assert.equal(r.topic, "review --set:cheap in the topic")
-  }
-})
-
-test("-- separator treats --set:cheap as part of the topic", () => {
-  const r = parseDebateArguments("-- --set:cheap not an option")
-  assert.equal(r.ok, true)
-  if (r.ok) {
-    assert.equal(r.set, "default")
-    assert.equal(r.topic, "--set:cheap not an option")
-  }
-})
-
-test("validPrompt emits the cheap participant set", () => {
-  const p = validPrompt("my topic", 5, "cheap", "abc123")
-  assert.match(p, /Participant set: cheap/)
-  assert.match(p, /Participant 1: debate-glm/)
-  assert.match(p, /Participant 2: debate-qwen/)
-  assert.match(p, /Participant 3: debate-kimi/)
-})
-
-test("validPrompt emits the default participant set by default", () => {
-  const p = validPrompt("my topic", 5, "default", "abc123")
-  assert.match(p, /Participant set: default/)
-  assert.match(p, /Participant 1: debate-kimi/)
-  assert.match(p, /Participant 2: debate-anthropic/)
-  assert.match(p, /Participant 3: debate-openai/)
-})
-
-test("validPrompt resolves participants from supplied sets", () => {
-  const prompt = validPrompt("my topic", 2, "custom", "abc123", DYNAMIC_REGISTRY.sets)
-
-  assert.match(prompt, /Participant set: custom/)
+test("validPrompt resolves only the configured default set without continuation metadata", () => {
+  const prompt = validPrompt("topic", 2, "abc123", DYNAMIC_REGISTRY)
   assert.match(prompt, /Participant 1: four/)
   assert.match(prompt, /Participant 2: five/)
   assert.match(prompt, /Participant 3: six/)
+  assert.doesNotMatch(prompt, /Participant set:|Continuation mode:/)
 })
 
-test("validPrompt defaults an omitted continuation mode to ask", () => {
-  const prompt = validPrompt("my topic", 2, "custom", "abc123", DYNAMIC_REGISTRY.sets)
-
-  assert.match(prompt, /^Continuation mode: ask$/m)
-})
-
-test("validPrompt emits an explicit discretion continuation mode", () => {
-  const prompt = validPrompt(
-    "my topic",
-    2,
-    "custom",
-    "abc123",
-    DYNAMIC_REGISTRY.sets,
-    "discretion",
-  )
-
-  assert.match(prompt, /^Continuation mode: discretion$/m)
-})
-
-test("createDebatePlugin propagates each selected set's continuation mode", async () => {
-  const hooks = await createDebatePlugin(DYNAMIC_REGISTRY)({} as never)
-  const before = hooks["command.execute.before"]
-  assert.ok(before)
-
-  for (const [set, continuation] of [["default", "ask"], ["custom", "discretion"]] as const) {
+for (const command of ["debate", "council"]) {
+  test(command + " resolves configured participants and rejects legacy CLI options", async () => {
+    const hooks = await createDebatePlugin(DYNAMIC_REGISTRY)({} as never)
+    const before = hooks["command.execute.before"]!
     const output: { parts: Part[] } = { parts: [] }
-    await before({ command: "debate", arguments: `--set:${set} my topic` } as never, output)
+    await before({ command, arguments: "topic" } as never, output)
+    assert.match(output.parts[0]?.type === "text" ? output.parts[0].text : "", /Participant 1: four/)
+    await before({ command, arguments: "--set:custom topic" } as never, output)
+    assert.match(output.parts[0]?.type === "text" ? output.parts[0].text : "", /Unsupported option/)
+  })
+}
 
-    assert.equal(output.parts[0]?.type, "text")
-    assert.match(output.parts[0]?.text ?? "", new RegExp(`^Continuation mode: ${continuation}$`, "m"))
-  }
-})
-
-test("createDebatePlugin uses one registry for parsing and prompt resolution", async () => {
-  const plugin = createDebatePlugin(DYNAMIC_REGISTRY)
-  const hooks = await plugin({} as never)
-  const before = hooks["command.execute.before"]
-  assert.ok(before)
-  const output: { parts: Part[] } = { parts: [] }
-
-  await before({ command: "debate", arguments: "--set:custom my topic" } as never, output)
-
-  assert.equal(output.parts[0]?.type, "text")
-  assert.match(output.parts[0]?.text ?? "", /Participant 1: four/)
-})
-
-test("configured default set reaches prompt participant resolution", async () => {
+test("unrelated commands leave output untouched", async () => {
   const hooks = await createDebatePlugin(DYNAMIC_REGISTRY)({} as never)
-  const before = hooks["command.execute.before"]
-  assert.ok(before)
   const output: { parts: Part[] } = { parts: [] }
-
-  await before({ command: "debate", arguments: "my topic" } as never, output)
-
-  const firstPart = output.parts[0]
-  assert.equal(firstPart?.type, "text")
-  if (firstPart?.type === "text") {
-    assert.match(firstPart.text, /Participant set: custom/)
-    assert.match(firstPart.text, /Participant 1: four/)
-  }
-})
-
-test("debate agent consumes resolved participants without owning set order", () => {
-  const prompt = readFileSync(new URL("../.opencode/agents/debate.md", import.meta.url), "utf8")
-  assert.match(prompt, /Resolved participants/)
-  assert.match(prompt, /Participant 1`, `Participant 2`, and `Participant 3` from the parsed request/)
-  assert.doesNotMatch(prompt, /`default` set: `Participant 1` uses the `debate-/)
-  assert.doesNotMatch(prompt, /`cheap` set: `Participant 1` uses the `debate-/)
-  assert.doesNotMatch(prompt, /`default` → `debate-/)
-  assert.doesNotMatch(prompt, /`cheap` → `debate-/)
+  await hooks["command.execute.before"]!({ command: "other", arguments: "topic" } as never, output)
+  assert.deepEqual(output.parts, [])
 })
 
 test("static and plugin participant prompts are identical", () => {
@@ -355,239 +196,57 @@ test("static and project-local coordinator prompts are identical", () => {
   assert.equal(COORDINATOR_PROMPT, markdownBody(source))
 })
 
-test("coordinator launches each round as a three-task batch", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /all three participant `task` calls in a single coordinator response/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Do not wait for one participant's task result before issuing the other two calls/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /wait for all three task results before formatting, storing, or forwarding the round/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /all three resumed participant `task` calls.*single coordinator response/s,
-  )
 
-  const round1Section = /^Round 1 flow:\n([\s\S]*?)^Round 1 participant prompt template:/m.exec(COORDINATOR_PROMPT)?.[1]
-  assert.ok(round1Section)
-  assert.match(
-    round1Section,
-    /all three participant `task` calls in a single coordinator response[\s\S]*Do not wait for one participant's task result before issuing the other two calls[\s\S]*wait for all three task results before formatting, storing, or forwarding the round/,
-  )
-
-  const round2Section = /^Round 2\+ flow:\n([\s\S]*?)^Round 2\+ participant prompt template:/m.exec(COORDINATOR_PROMPT)?.[1]
-  assert.ok(round2Section)
-  assert.match(
-    round2Section,
-    /all three resumed participant `task` calls.*single coordinator response[\s\S]*Do not wait for one participant's task result before issuing the other two calls[\s\S]*wait for all three task results before formatting, storing, or forwarding the round/s,
-  )
-})
-
-test("coordinator canonicalises the complete round before advancing", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /next round cannot begin until all three responses.*successfully formatted/s,
-  )
-  assert.match(COORDINATOR_PROMPT, /Use only the canonical JSON returned by the formatter/)
-  assert.match(COORDINATOR_PROMPT, /semantic\/schema errors.*resumed participant.*existing `task_id`/s)
-})
-
-test("coordinator task prompts carry structured dispatch markers for every purpose", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /\[DEBATE_DISPATCH purpose=normal participant=<N> round=1 subagent_type=<resolved subagent_type>\]/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /\[DEBATE_DISPATCH purpose=normal participant=<N> round=<round> subagent_type=<resolved subagent_type>\]/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /purpose=retry participant=<N> round=<round> subagent_type=<existing subagent_type>/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /purpose=formatter-correction participant=<N> round=<round> subagent_type=<existing subagent_type>/,
-  )
-  assert.match(COORDINATOR_PROMPT, /marker.*exactly.*first line/i)
-})
-
-test("coordinator states task_id continuity and round-one omission explicitly", () => {
-  assert.match(COORDINATOR_PROMPT, /round 1.*omit.*task_id/i)
-  assert.match(COORDINATOR_PROMPT, /later rounds.*exact.*saved.*task_id/i)
-  assert.match(COORDINATOR_PROMPT, /retry.*exact.*saved.*task_id/i)
-  assert.match(COORDINATOR_PROMPT, /formatter correction.*exact.*saved.*task_id/i)
-})
-
-test("coordinator does not duplicate the formatter correction completion instruction", () => {
-  assert.equal(
-    COORDINATOR_PROMPT.toLowerCase().split("repeat until formatting is successful.").length - 1,
-    1,
-  )
-})
-
-test("coordinator formats every participant response before storing or forwarding it", () => {
-  assert.match(COORDINATOR_PROMPT, /after every participant response/i)
-  assert.match(COORDINATOR_PROMPT, /`format_debate_response`/)
-  assert.match(COORDINATOR_PROMPT, /schema `round1` for round 1 and `round2` for later rounds/)
-  assert.match(COORDINATOR_PROMPT, /before storing or forwarding/)
-  assert.match(COORDINATOR_PROMPT, /Use only the canonical JSON returned by the formatter/)
-})
-
-test("coordinator uses syntax-only repairs and exact diagnostics until formatting succeeds", () => {
-  assert.match(COORDINATOR_PROMPT, /syntax-preserving repair/i)
-  assert.match(COORDINATOR_PROMPT, /semantic\/schema errors.*exact diagnostic.*resumed participant/i)
-  assert.match(COORDINATOR_PROMPT, /exact diagnostic/i)
-  assert.match(COORDINATOR_PROMPT, /repeat until .*successful/i)
-  assert.match(COORDINATOR_PROMPT, /record .*failed .* under `## JSON Parsing Problems`/i)
-  assert.match(COORDINATOR_PROMPT, /Never infer .*status/i)
-  assert.doesNotMatch(COORDINATOR_PROMPT, /strip any markdown code fence, then extract the substring/)
-  assert.doesNotMatch(COORDINATOR_PROMPT, /treat both statuses for that participant as `false`/)
-})
-
-test("coordinator keeps syntax and semantic formatting corrections separate", () => {
-  assert.doesNotMatch(COORDINATOR_PROMPT, /syntax or semantic formatting retry may resume/i)
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Syntax errors remain coordinator-side syntax-preserving repairs; do not resume a participant merely for a syntax error\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /A semantic\/schema formatting retry may resume only the affected participant with its existing `task_id` and `subagent_type`/,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Neither a syntax-preserving repair nor a semantic\/schema formatting retry advances the debate or starts a normal next round\./,
-  )
-})
-
-test("syntax repairs are resubmitted and repeated until canonical formatter output", () => {
-  const syntaxRepairClause = /^- If the formatter reports a syntax error,[^\n]+$/m.exec(COORDINATOR_PROMPT)?.[0]
-  assert.ok(syntaxRepairClause)
-  assert.match(syntaxRepairClause, /resubmit the repaired response to `format_debate_response`/)
-  assert.match(syntaxRepairClause, /repeat syntax-preserving repair attempts until the formatter returns canonical output/)
-})
-
-test("coordinator preserves task failure retry and abort handling separately from formatting", () => {
-  assert.match(COORDINATOR_PROMPT, /If a participant task fails, times out, or returns empty output, retry that participant once/)
-  assert.match(COORDINATOR_PROMPT, /If it fails again, stop the debate and produce a final synthesis/)
-  assert.match(COORDINATOR_PROMPT, /Formatting failures are not participant task failures/)
-})
-
-test("coordinator applies ask and discretion continuation modes without a hard cap", () => {
-  assert.match(COORDINATOR_PROMPT, /`ask` mode.*Question tool/s)
-  assert.match(COORDINATOR_PROMPT, /`discretion` mode/s)
-  assert.match(COORDINATOR_PROMPT, /Question, one autonomous extra round, or synthesis/s)
-  assert.match(COORDINATOR_PROMPT, /three false `consensus_reached` values.*guidance, not a hard trigger/s)
-  assert.match(COORDINATOR_PROMPT, /re-evaluate after each extension/is)
-  assert.match(COORDINATOR_PROMPT, /no hard extension cap/s)
-})
-
-test("every continuation Question has one neutral procedural rationale", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Whenever a continuation decision uses the `Question` tool, include exactly one concise procedural rationale based only on debate process state or quality\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Do not add substantive coordinator debate arguments, new research, or topic conclusions to any continuation `Question`\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /This same rationale, recommendation, and option-marking policy applies to the ask-mode continuing recommendation Question, every discretion-mode Question, and the discretion-mode Question used when all participants recommend stopping but ordinary early stop did not trigger\./,
-  )
-})
-
-test("coordinator makes an advisory recommendation for every continuation Question", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Before every continuation `Question`, make your own neutral coordinator recommendation: stop, one more round, three more rounds, or a custom positive count\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /Base it only on debate process state or quality; do not merely repeat a participant recommendation\./,
-  )
-  assert.match(COORDINATOR_PROMPT, /The recommendation is advisory; the user still chooses\./)
-})
-
-test("continuation Questions mark only the matching fixed or custom recommendation", () => {
-  assert.match(
-    COORDINATOR_PROMPT,
-    /If and only if the recommendation is one of the three fixed choices \(`1 more round`, `3 more rounds`, or `Stop and synthesise now`\), append `\(Recommended\)` to exactly that one matching fixed option and to no other fixed option\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /If the recommendation is a custom positive count, append `\(Recommended\)` to none of the fixed options, state the exact positive count as the advisory recommendation, and do not add or invent a fourth fixed option\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /The user still chooses among the fixed options or enters a custom numeric value under the existing handling\./,
-  )
-  assert.match(
-    COORDINATOR_PROMPT,
-    /This same rationale, recommendation, and option-marking policy applies to the ask-mode continuing recommendation Question, every discretion-mode Question, and the discretion-mode Question used when all participants recommend stopping but ordinary early stop did not trigger\./,
-  )
-})
-
-test("coordinator continuation status matrix scopes all-recommend-stopping to ask mode", () => {
-  const statusMatrix = [
-    {
-      state: "consensus is not unanimous and all recommend stopping in discretion mode",
-      expected: /In `discretion` mode[^\n]+always make the three-way choice[^\n]+including when all participants recommend stopping but ordinary early stop did not trigger/,
-    },
-    {
-      state: "discretion asks neutrally when all recommend stopping without consensus",
-      expected: /^- If choosing Question in discretion mode, including when all participants recommend stopping but ordinary early stop did not trigger, include exactly one concise procedural rationale and your own neutral advisory recommendation under the policy above\. When all participants recommend stopping without unanimous consensus, ask: "The debate reached the configured round limit without unanimous consensus\. How many additional rounds should we run\?" Otherwise, use the current Question flow\. In either case, use the same fixed options, recommendation marking, and custom numeric\/non-numeric response handling as the ask-mode Question flow; do not add substantive arguments for or against the topic, new research, or topic conclusions\.$/m,
-    },
-    {
-      state: "consensus is not unanimous and all recommend stopping in ask mode",
-      expected: /In `ask` mode[^\n]+if all participants recommend stopping, proceed to final synthesis/,
-    },
-    {
-      state: "all consensus and stopping statuses are true in either mode",
-      expected: /stop early only if all participants' latest `consensus_reached` and `recommend_stopping` values are both `true`/,
-    },
-    {
-      state: "at least one participant recommends continuing in ask mode",
-      expected: /In `ask` mode[^\n]+at least one participant's latest `recommend_stopping` is `false`, use the Question tool/,
-    },
-    {
-      state: "ask mode retains its continuing-recommendation Question wording",
-      expected: /^- Ask: "The debate reached the configured round limit\. At least one participant recommends continuing\. How many additional rounds should we run\?"$/m,
-    },
-  ]
-
-  for (const { state, expected } of statusMatrix) {
-    assert.match(COORDINATOR_PROMPT, expected, state)
+test("coordinator uses concrete configured markers and independent concurrent first-round tasks", () => {
+  const participants = DYNAMIC_REGISTRY.participants.slice(3)
+  const prompt = buildCoordinatorPrompt(participants)
+  for (const [index, participant] of participants.entries()) {
+    assert.ok(prompt.includes("[DEBATE_DISPATCH purpose=normal participant=" + (index + 1) + " round=1 subagent_type=" + participant.agent + "]"))
   }
-  assert.doesNotMatch(
-    COORDINATOR_PROMPT,
-    /after all participants recommend stopping at `effective_max_rounds`/,
-  )
-  const neutralQuestionClause = /^- If choosing Question in discretion mode, including when all participants recommend stopping[^\n]+$/m.exec(COORDINATOR_PROMPT)?.[0]
-  assert.ok(neutralQuestionClause)
-  assert.doesNotMatch(neutralQuestionClause, /recommends continuing/)
+  assert.doesNotMatch(prompt, /subagent_type=<|subagent_type=one\]/)
+  assert.match(prompt, /all three task calls in one response as a concurrent batch/)
+  assert.match(prompt, /same original delimited topic and no peer answers/)
 })
 
-test("coordinator retains the request topic token in the multiline transcript topic block", () => {
-  assert.match(COORDINATOR_PROMPT, /retain the request topic token/is)
-  assert.match(COORDINATOR_PROMPT, /\*\*Topic:\*\* <!-- BEGIN TOPIC <token> -->/)
-  assert.match(COORDINATOR_PROMPT, /<topic copied verbatim>/)
-  assert.match(COORDINATOR_PROMPT, /<!-- END TOPIC <token> -->/)
+test("coordinator preserves session continuity and canonical-only round transitions", () => {
+  assert.match(COORDINATOR_PROMPT, /Round 1 normal tasks omit task_id/)
+  assert.match(COORDINATOR_PROMPT, /Later normal tasks, retries, and formatter-correction tasks reuse that same participant task_id/)
+  assert.match(COORDINATOR_PROMPT, /Do not advance to the next round until all three current turns are canonical/)
+  assert.match(COORDINATOR_PROMPT, /other two exact canonical previous-round turns/)
+  assert.match(COORDINATOR_PROMPT, /Wait for all three task results in a round/)
 })
 
-test("coordinator delegates date and transcript persistence to the custom tool", () => {
-  assert.match(COORDINATOR_PROMPT, /persist_debate_transcript/)
-  assert.match(COORDINATOR_PROMPT, /<timestamp>.*placeholder/i)
-  assert.match(COORDINATOR_PROMPT, /slug/i)
-  assert.doesNotMatch(COORDINATOR_PROMPT, /date -u \+%Y-%m-%dT%H-%M-%SZ/)
-  assert.doesNotMatch(COORDINATOR_PROMPT, /generate_html\.py --latest/)
-  assert.doesNotMatch(COORDINATOR_PROMPT, /Use the `write` or `edit` tool/)
+test("coordinator binds formatting to actual results, never self-repairs, and caps corrections", () => {
+  assert.ok(COORDINATOR_PROMPT.includes("using ONLY {participant:1|2|3,round:N}"))
+  assert.match(COORDINATOR_PROMPT, /runtime reads the actual task result/)
+  assert.match(COORDINATOR_PROMPT, /Do not pass a response string/)
+  assert.match(COORDINATOR_PROMPT, /Never repair JSON yourself/)
+  assert.match(COORDINATOR_PROMPT, /exact diagnostic to the original participant with purpose=formatter-correction/)
+  assert.match(COORDINATOR_PROMPT, /At most two corrections per participant\/round/)
+  assert.match(COORDINATOR_PROMPT, /global cap of 12/)
+})
+
+test("coordinator uses strict schemas and does not extend or shorten from advisory status", () => {
+  assert.ok(COORDINATOR_PROMPT.includes('JSON {"turn":"..."}'))
+  assert.ok(COORDINATOR_PROMPT.includes('"consensus_reached":true|false,"recommend_stopping":true|false'))
+  assert.match(COORDINATOR_PROMPT, /Never request position, reasoning, evidence, concerns/)
+  assert.match(COORDINATOR_PROMPT, /status fields are advisory only and cannot extend or shorten/)
+  assert.match(COORDINATOR_PROMPT, /No extension rounds, Question calls, or transcript persistence/)
+})
+
+test("coordinator exhausted retry aborts without synthesizing incomplete evidence", () => {
+  assert.match(COORDINATOR_PROMPT, /purpose=retry only once per participant\/round/)
+  assert.match(COORDINATOR_PROMPT, /task failure after its one retry terminates the Council/)
+  assert.match(COORDINATOR_PROMPT, /Do not call another tool or model, produce a report, or synthesize incomplete evidence/)
+  assert.match(COORDINATOR_PROMPT, /deterministic Council Abort/)
+  assert.doesNotMatch(COORDINATOR_PROMPT, /no hard extension cap|repeat until formatting is successful|syntax-preserving repair|ask-mode/)
+})
+
+test("coordinator reports six ordered advisory sections and leaves decisions to Codex", () => {
+  assert.match(COORDINATOR_PROMPT, /## Council Report/)
+  assert.match(COORDINATOR_PROMPT, /Participant findings, Agreements, Disagreements, Risks, Falsification tests, Unresolved questions/)
+  assert.match(COORDINATOR_PROMPT, /Preserve minority views/)
+  assert.match(COORDINATOR_PROMPT, /Do not state a final recommendation, choose an option, or present consensus as authority; Codex decides/)
 })
 
 test("task permissions are derived from the participant registry", () => {
@@ -597,12 +256,12 @@ test("task permissions are derived from the participant registry", () => {
   })
 })
 
-test("runtime registration uses every effective participant and omits absent variants", async () => {
+test("runtime registration uses only selected effective participants and omits absent variants", async (t) => {
   let loads = 0
   const server = createServer(() => {
     loads++
     return DYNAMIC_REGISTRY
-  })
+  }, isolatedStore(t))
   const hooks = await server({
     client: { app: { log: async () => ({ data: true }) } },
     directory: "/tmp/project",
@@ -641,14 +300,11 @@ test("runtime registration uses every effective participant and omits absent var
     "debate",
     "five",
     "four",
-    "one",
     "reviewer",
     "six",
-    "three",
-    "two",
   ])
-  assert.equal(config.agent.one.model, "provider/one")
-  assert.equal(Object.hasOwn(config.agent.one, "variant"), false)
+  assert.equal(config.agent.four.model, "provider/four")
+  assert.equal(Object.hasOwn(config.agent.four, "variant"), false)
   assert.deepEqual(config.permission, {
     bash: "allow",
     format_debate_response: "deny",
@@ -656,9 +312,7 @@ test("runtime registration uses every effective participant and omits absent var
     task: {
       "*": "allow",
       general: "ask",
-      one: "deny",
-      two: "deny",
-      three: "deny",
+      one: "allow",
       four: "deny",
       five: "deny",
       six: "deny",
@@ -670,9 +324,7 @@ test("runtime registration uses every effective participant and omits absent var
     [PERSIST_DEBATE_TRANSCRIPT_TOOL]: "deny",
     task: {
       "*": "allow",
-      one: "deny",
-      two: "deny",
-      three: "deny",
+      one: "allow",
       four: "deny",
       five: "deny",
       six: "deny",
@@ -683,36 +335,37 @@ test("runtime registration uses every effective participant and omits absent var
     format_debate_response: "deny",
     [PERSIST_DEBATE_TRANSCRIPT_TOOL]: "deny",
     task: {
-      one: "deny",
-      two: "deny",
-      three: "deny",
       four: "deny",
       five: "deny",
       six: "deny",
     },
   })
-  for (const name of ["one", "two", "three", "four", "five", "six"]) {
+  for (const name of ["four", "five", "six"]) {
     assert.equal(config.agent[name].hidden, true)
-    assert.equal(config.agent[name].permission.bash, "ask")
-    assert.equal(config.agent[name].permission.task, "deny")
+    assert.equal(config.agent[name].steps, 5)
+    assert.deepEqual(config.agent[name].permission, {
+      ...PARTICIPANT_PERMISSION,
+      format_debate_response: "deny",
+      [PERSIST_DEBATE_TRANSCRIPT_TOOL]: "deny",
+    })
   }
+  assert.equal(config.agent.debate.prompt, buildCoordinatorPrompt(DYNAMIC_REGISTRY.participants.slice(3)))
+  assert.deepEqual(config.agent.debate.permission, coordinatorPermission(DYNAMIC_REGISTRY.participants.slice(3)))
+  assert.deepEqual(config.command.council, config.command.debate)
   assert.deepEqual(config.agent.debate.permission.task, {
     "*": "deny",
-    one: "allow",
-    two: "allow",
-    three: "allow",
     four: "allow",
     five: "allow",
     six: "allow",
   })
 })
 
-test("configuration failures are logged once and abort plugin initialisation", async () => {
+test("configuration failures are logged once and abort plugin initialisation", async (t) => {
   const error = new DebateConfigError("/tmp/bad.yaml", "participants.bad.model", "expected a non-empty string")
   const logs: unknown[] = []
   const server = createServer(() => {
     throw error
-  })
+  }, isolatedStore(t))
 
   await assert.rejects(
     server({
@@ -731,18 +384,18 @@ test("configuration failures are logged once and abort plugin initialisation", a
   )
   assert.deepEqual(logs, [{
     body: {
-      service: "opencode-debate",
+      service: "opencode-council",
       level: "error",
       message: error.message,
     },
   }])
 })
 
-test("a logging failure does not mask the configuration failure", async () => {
+test("a logging failure does not mask the configuration failure", async (t) => {
   const error = new DebateConfigError("/tmp/bad.yaml", "$", "bad YAML")
   const server = createServer(() => {
     throw error
-  })
+  }, isolatedStore(t))
 
   await assert.rejects(
     server({
@@ -754,9 +407,9 @@ test("a logging failure does not mask the configuration failure", async () => {
   )
 })
 
-test("participant permissions require shell approval and deny external access", () => {
+test("participant permissions deny shell, web, writes and external access", () => {
   assert.equal(PARTICIPANT_PERMISSION["*"], "deny")
-  assert.equal(PARTICIPANT_PERMISSION.bash, "ask")
+  for (const tool of ["bash", "webfetch", "websearch", "edit", "question", "task", "skill"] as const) assert.equal(PARTICIPANT_PERMISSION[tool], "deny")
   assert.equal(PARTICIPANT_PERMISSION.external_directory, "deny")
   assert.deepEqual(PARTICIPANT_PERMISSION.read, {
     "*": "allow",
@@ -766,27 +419,28 @@ test("participant permissions require shell approval and deny external access", 
   })
 })
 
-test("coordinator permits only the transcript persistence tool for persistence", () => {
+test("coordinator denies persistence and questions", () => {
   const permission = coordinatorPermission()
-  assert.equal(permission[PERSIST_DEBATE_TRANSCRIPT_TOOL], "allow")
+  assert.equal(permission[PERSIST_DEBATE_TRANSCRIPT_TOOL], "deny")
+  assert.equal(permission.question, "deny")
   assert.equal(Object.hasOwn(permission, "bash"), false)
   assert.equal(Object.hasOwn(permission, "edit"), false)
   assert.equal(permission["*"], "deny")
   assert.equal(permission.external_directory, "deny")
 })
 
-test("server registers the coordinator-only transcript persistence tool", async () => {
-  const hooks = await createServer(() => DYNAMIC_REGISTRY)({
+test("server registers only the runtime-bound formatter and no persistence tool", async (t) => {
+  const hooks = await createServer(() => DYNAMIC_REGISTRY, isolatedStore(t))({
     client: { app: { log: async () => ({ data: true }) } },
     directory: "/tmp/project",
     worktree: "/tmp/project",
   } as never)
 
-  assert.ok(hooks.tool?.[PERSIST_DEBATE_TRANSCRIPT_TOOL])
+  assert.deepEqual(Object.keys(hooks.tool ?? {}), ["format_debate_response"])
 })
 
-test("server composes task dispatch lifecycle hooks", async () => {
-  const hooks = await createServer(() => DYNAMIC_REGISTRY)({
+test("server composes task dispatch lifecycle and model hooks", async (t) => {
+  const hooks = await createServer(() => DYNAMIC_REGISTRY, isolatedStore(t))({
     client: { app: { log: async () => ({ data: true }) } },
     directory: "/tmp/project",
     worktree: "/tmp/project",
@@ -796,10 +450,11 @@ test("server composes task dispatch lifecycle hooks", async () => {
   assert.ok(hooks["tool.execute.after"])
   assert.ok(hooks.event)
   assert.ok(hooks.dispose)
+  assert.ok(hooks["chat.params"])
 })
 
-test("server composes debate command handling before dispatch validation", async () => {
-  const hooks = await createServer(() => DYNAMIC_REGISTRY)({
+test("server composes debate command handling before dispatch validation", async (t) => {
+  const hooks = await createServer(() => DYNAMIC_REGISTRY, isolatedStore(t))({
     client: { app: { log: async () => ({ data: true }) } },
     directory: "/tmp/project",
     worktree: "/tmp/project",
@@ -834,7 +489,7 @@ test("-- separator treats the rest as the topic", () => {
   assert.equal(r.ok, true)
   if (r.ok) {
     assert.equal(r.topic, "--rounds 5 not an option")
-    assert.equal(r.rounds, 3)
+    assert.equal(r.rounds, 2)
   }
 })
 
@@ -843,7 +498,7 @@ test("options after the first topic token are part of the topic", () => {
   assert.equal(r.ok, true)
   if (r.ok) {
     assert.equal(r.topic, "review --rounds 5 in the topic")
-    assert.equal(r.rounds, 3)
+    assert.equal(r.rounds, 2)
   }
 })
 
@@ -870,32 +525,32 @@ test("quoted topic is trimmed before parsing", () => {
   assert.equal(r.ok, true)
   if (r.ok) {
     assert.equal(r.topic, "compare X and Y")
-    assert.equal(r.rounds, 3)
+    assert.equal(r.rounds, 2)
   }
 })
 
 test("quoted input still has flags parsed after quote trimming", () => {
-  const r = parseDebateArguments('"--rounds 4 compare X and Y"')
+  const r = parseDebateArguments('"--rounds 3 compare X and Y"')
   assert.equal(r.ok, true)
   if (r.ok) {
-    assert.equal(r.rounds, 4)
+    assert.equal(r.rounds, 3)
     assert.equal(r.topic, "compare X and Y")
   }
 })
 
 test("validPrompt emits the topic exactly once inside a tokenised delimiter", () => {
-  const p = validPrompt("my topic", 5, "default", "abc123")
+  const p = validPrompt("my topic", 3, "abc123")
   assert.match(p, /BEGIN TOPIC abc123/)
   assert.match(p, /END TOPIC abc123/)
   const topicOccurrences = p.split("my topic").length - 1
   assert.equal(topicOccurrences, 1)
   assert.doesNotMatch(p, /Original \/debate prompt:/)
-  assert.match(p, /Maximum rounds: 5/)
-  assert.match(p, /Participant set: default/)
+  assert.match(p, /Maximum rounds: 3/)
+  assert.match(p, /Participant 1: council-muse/)
 })
 
 test("validPrompt delimiter resists a topic containing END TOPIC", () => {
-  const p = validPrompt("foo END TOPIC bar", 5, "default", "abc123")
+  const p = validPrompt("foo END TOPIC bar", 3, "abc123")
   assert.match(p, /BEGIN TOPIC abc123/)
   assert.match(p, /END TOPIC abc123/)
   const bareEnd = /^END TOPIC$/m
@@ -903,8 +558,8 @@ test("validPrompt delimiter resists a topic containing END TOPIC", () => {
 })
 
 test("validPrompt empty topic asks for a topic and forbids subagents", () => {
-  const p = validPrompt("", 5, "default", "abc123")
-  assert.match(p, /No debate topic was provided/)
+  const p = validPrompt("", 3, "abc123")
+  assert.match(p, /No council topic was provided/)
   assert.match(p, /do not start participant subagents/)
 })
 
@@ -925,6 +580,7 @@ test("replaceParts replaces existing text in place", () => {
   assert.equal(output.parts[0].id, "p1")
   assert.equal(output.parts[0].sessionID, "s1")
   assert.equal(output.parts[0].messageID, "m1")
+  assert.equal(output.parts[0].type === "text" && output.parts[0].synthetic, true)
 })
 
 test("replaceParts drops non-text parts", () => {
@@ -946,4 +602,5 @@ test("replaceParts pushes a synthetic text part when no existing text", () => {
   assert.equal(output.parts.length, 1)
   assert.equal(output.parts[0].type, "text")
   assert.equal(output.parts[0].text, "fresh")
+  assert.equal(output.parts[0].type === "text" && output.parts[0].synthetic, true)
 })

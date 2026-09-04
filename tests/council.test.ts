@@ -27,7 +27,8 @@ test("participant limits and permissions are fixed", () => {
 test("turn truncation happens only after canonical JSON parsing", () => {
   const canonical = JSON.stringify({ turn: "x".repeat(COUNCIL_LIMITS.maxTurnChars + 1) })
   const limited = JSON.parse(limitCanonicalTurn(canonical)) as { turn: string }
-  assert.equal(limited.turn.startsWith("x".repeat(COUNCIL_LIMITS.maxTurnChars)), true)
+  assert.equal(Array.from(limited.turn).length, COUNCIL_LIMITS.maxTurnChars)
+  assert.ok(limited.turn.startsWith("x"))
   assert.match(limited.turn, /Truncated by council safety limit/)
 })
 
@@ -36,8 +37,8 @@ test("coordinator returns an advisory council report without a final recommendat
     assert.match(COORDINATOR_PROMPT, new RegExp(heading))
   }
   assert.match(COORDINATOR_PROMPT, /Do not state a final recommendation/)
-  assert.match(COORDINATOR_PROMPT, /Do not call persist_debate_transcript in this sidecar workflow/)
-  assert.match(COORDINATOR_PROMPT, /DEBATE_DISPATCH purpose=normal participant=1 round=1 subagent_type=council-mimo/)
+  assert.match(COORDINATOR_PROMPT, /Do not call persist_debate_transcript/)
+  assert.match(COORDINATOR_PROMPT, /DEBATE_DISPATCH purpose=normal participant=1 round=1 subagent_type=council-muse/)
   assert.match(COORDINATOR_PROMPT, /Never emit angle brackets or alternatives/)
   assert.doesNotMatch(COORDINATOR_PROMPT, /purpose=<normal\|retry\|formatter-correction>/)
   assert.match(COORDINATOR_PROMPT, /Do not issue a task without this marker/)

@@ -73,14 +73,14 @@ export function validPrompt(
   rounds: number,
   token: string = randomDelimiter(),
   registry: DebateRegistry = DEBATE_REGISTRY,
-  sets: DebateParticipantSets = DEBATE_PARTICIPANT_SETS,
+  sets: DebateParticipantSets = registry.sets,
 ): string {
   if (topic === "") return ["No council topic was provided.", "", "Ask the user for a topic and do not start participant subagents."].join("\n")
   return [
     "Run a bounded council with this parsed request.", "", "Topic:", `BEGIN TOPIC ${token}`, topic, `END TOPIC ${token}`, "",
     `Maximum rounds: ${rounds}`, "Resolved participants:", ...resolvedParticipants(sets, registry), "",
     "The command arguments have already been parsed and validated. Do not re-parse slash-command flags.",
-    "Use the resolved participants exactly as listed for every round. After the configured final round, synthesise immediately; never ask for or run extension rounds.",
+    "Use the resolved participants exactly as listed for every round. After the configured final round is validated, return the advisory Council Report; never ask for or run extension rounds.",
   ].join("\n")
 }
 
@@ -98,7 +98,7 @@ export function createDebatePlugin(registry: DebateRegistry): Plugin {
   return async () => ({
     "command.execute.before": async (input, output) => {
       if (input.command !== "debate" && input.command !== "council") return
-      const parsed = parseDebateArguments(input.arguments)
+      const parsed = parseDebateArguments(input.arguments, registry)
       replaceParts(output, parsed.ok ? validPrompt(parsed.topic, parsed.rounds, randomDelimiter(), registry) : errorPrompt(parsed.error))
     },
   })
