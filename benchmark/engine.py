@@ -24,7 +24,7 @@ METHOD = {
     "version": "0.1", "single_model": DS, "weak_model": LUNA,
     "order": ["shared", "H+D", "H Alone", "S1", "S2"],
     "council_participants": "four product defaults", "council_rounds": 2,
-    "s2_min_searches": 2, "s2_max_searches": 4,
+    "s2_min_searches": 2, "s2_max_searches": 10,
     "token_cap": 5000000, "time_cap_seconds": 3600,
     "council_timeout_seconds": 600, "single_timeout_seconds": 300,
     "matching_tolerance": 0.20, "answer_word_guidance": 600,
@@ -131,18 +131,32 @@ def source_files(root):
     return sorted(set(paths))
 
 
-def prepare(output, tasks_root=None, source_root=ROOT):
+def prepare(output, tasks_root=None, source_root=ROOT, task_ids=None):
     output, source_root = Path(output).absolute(), Path(source_root).resolve()
     tasks_root = Path(tasks_root or source_root / "benchmark/tasks").resolve()
     require(not output.exists(), "prepare output already exists; never overwrite a frozen bundle")
     task_paths = sorted(tasks_root.glob("*/task.json"))
     require(task_paths, "no task.json files found")
-    tasks = []
+    candidates = []
     for task_path in task_paths:
-        task, rubric = read_json(task_path), read_json(task_path.with_name("rubric.json"))
+        task = read_json(task_path)
+        require(isinstance(task, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", task.get("id", "")) is not None, "invalid task ID")
+        candidates.append((task_path, task))
+    require(len({task["id"] for _, task in candidates}) == len(candidates), "duplicate task IDs")
+    if task_ids is not None:
+        require(isinstance(task_ids, (list, tuple)) and task_ids, "task_ids must be a non-empty list when provided")
+        require(all(isinstance(task_id, str) for task_id in task_ids), "task_ids must contain strings")
+        require(len(set(task_ids)) == len(task_ids), "duplicate requested task IDs")
+        known_ids = {task["id"] for _, task in candidates}
+        unknown_ids = sorted(set(task_ids) - known_ids)
+        require(not unknown_ids, "unknown task IDs: " + ", ".join(unknown_ids))
+        requested = set(task_ids)
+        candidates = [row for row in candidates if row[1]["id"] in requested]
+    tasks = []
+    for task_path, task in candidates:
+        rubric = read_json(task_path.with_name("rubric.json"))
         validate_task(task, rubric, task_path.parent)
         tasks.append((task_path, task, rubric))
-    require(len({task["id"] for _, task, _ in tasks}) == len(tasks), "duplicate task IDs")
     output.mkdir(parents=True)
     originals = {}
     for task_path, task, _ in tasks:
@@ -365,11 +379,25 @@ def execute(bundle, output, approval, adapter, token_cap=500000, time_cap=3600, 
             )
             state["shared_counting_note"] = "Actual calls count shared council once; arm accounted cost/latency count it in both H+D and H Alone."
             persist()
-            template = {"annotator": "", "mock": mock, "answers": []}
+            template = {
+                "annotator": "", "review_type": "", "mock": mock,
+                "status_values": ["hit", "partial", "miss"],
+                "answer_evidence_fields": ["quote", "start_line", "end_line"],
+                "novel_candidate_fields": ["id", "novel", "grounded", "testable", "counted", "evidence", "source_refs", "rationale", "falsifier", "cheapest_test"],
+                "audited_claim_fields": ["id", "supported", "evidence", "source_refs", "reason"],
+                "answers": [],
+            }
             index_entries = []
             for entry in sorted(state["answers"], key=lambda item: item["blind_id"]):
                 rubric = read_json(bundle / "tasks" / entry["task_id"] / "rubric.json")
-                template["answers"].append({"blind_id": entry["blind_id"], "critical": [{"id": row["id"], "present": None, "evidence": []} for row in rubric["critical_insights"]], "risks": [{"id": row["id"], "recognized": None, "evidence": []} for row in rubric["catastrophic_risks"]], "novel_candidates": [], "claims": [], "task_success": None, "success_evidence": [], "harmful_recommendations": []})
+                template["answers"].append({
+                    "blind_id": entry["blind_id"],
+                    "critical": [{"id": row["id"], "status": None, "evidence": []} for row in rubric["critical_insights"]],
+                    "risks": [{"id": row["id"], "status": None, "evidence": []} for row in rubric["catastrophic_risks"]],
+                    "novel_candidates": [], "claims": [], "task_success": None,
+                    "decision_evidence": [], "decisive_failure_evidence": [],
+                    "harmful_recommendations": [],
+                })
                 index_entries.append({"blind_id": entry["blind_id"], "task_id": entry["task_id"], "file": entry["blind_id"] + ".txt"})
             expected_answers = len(manifest["task_ids"]) * 4
             write_json(blind_dir / "index.json", {"mock": mock, "run_status": state["status"],
@@ -391,12 +419,25 @@ def check_evidence(evidence, lines, needed):
         require(nonempty(quote) and quote in "\n".join(lines[start - 1:end]), "quote not found in specified answer lines")
 
 
+def judgment_status(item, legacy_boolean):
+    status = item.get("status")
+    if status is not None:
+        require(status in ("hit", "partial", "miss"), "status must be hit, partial, or miss")
+        if legacy_boolean in item:
+            require(type(item[legacy_boolean]) is bool, f"explicit {legacy_boolean} boolean required")
+            require(item[legacy_boolean] == (status == "hit"), f"status conflicts with {legacy_boolean}")
+        return status
+    require(type(item.get(legacy_boolean)) is bool, f"explicit status or legacy {legacy_boolean} boolean required")
+    return "hit" if item[legacy_boolean] else "miss"
+
+
 def score(run_dir, annotations, output):
     run_dir, output = Path(run_dir).resolve(), Path(output).absolute()
     require(not output.exists(), "score output already exists")
     state, annotation = read_json(run_dir / "run.json"), read_json(annotations)
     require(state["status"] == "complete", "only complete runs can be scored")
-    require(nonempty(annotation.get("annotator")), "human annotator required")
+    require(nonempty(annotation.get("annotator")), "annotator required")
+    require(annotation.get("review_type") in ("human", "ai-assisted"), "review_type must be human or ai-assisted")
     bundle = Path(state["bundle"])
     manifest = validate(bundle, check_originals=False)
     require(state["approval"] == digest(bundle / "manifest.json"), "run bundle identity changed")
@@ -419,14 +460,16 @@ def score(run_dir, annotations, output):
         task = read_json(bundle / "tasks" / answer["task_id"] / "task.json")
         source_ids = {item["id"] for item in task["materials"] + task.get("sources", [])}
         counts = {}
-        for field, rubric_field, boolean in (("critical", "critical_insights", "present"), ("risks", "catastrophic_risks", "recognized")):
+        for field, rubric_field, legacy_boolean in (("critical", "critical_insights", "present"), ("risks", "catastrophic_risks", "recognized")):
             judgments = entry.get(field)
             expected = {item["id"] for item in rubric[rubric_field]}
             require(isinstance(judgments, list) and len(judgments) == len(expected) and {item.get("id") for item in judgments} == expected, f"{field} must cover exact rubric IDs")
+            statuses = []
             for item in judgments:
-                require(type(item.get(boolean)) is bool, f"explicit {boolean} boolean required")
-                check_evidence(item.get("evidence"), lines, item[boolean])
-            counts[field] = (sum(item[boolean] for item in judgments), len(judgments))
+                status = judgment_status(item, legacy_boolean)
+                check_evidence(item.get("evidence"), lines, status in ("hit", "partial"))
+                statuses.append(status)
+            counts[field] = {status: statuses.count(status) for status in ("hit", "partial", "miss")}
         for field, booleans in (("novel_candidates", ("novel", "grounded", "testable")), ("claims", ("supported",))):
             judgments = entry.get(field)
             require(isinstance(judgments, list), f"{field} audit list required")
@@ -439,24 +482,37 @@ def score(run_dir, annotations, output):
                 require(bool(refs) or not item.get("grounded", item.get("supported", False)), "grounded/supported judgment requires source_refs")
                 if field == "novel_candidates":
                     require(all(nonempty(item.get(key)) for key in ("rationale", "falsifier", "cheapest_test")), "candidate rationale/falsifier/cheapest_test required")
+                    counted = all(item[boolean] for boolean in booleans)
+                    if "counted" in item:
+                        require(type(item["counted"]) is bool and item["counted"] == counted, "counted must equal novel AND grounded AND testable")
+                else:
+                    require(nonempty(item.get("reason")), "audited factual claim reason required")
             counts[field] = (sum(all(item[boolean] for boolean in booleans) for item in judgments), len(judgments))
         require(type(entry.get("task_success")) is bool, "explicit task_success boolean required")
-        check_evidence(entry.get("success_evidence"), lines, True)
+        if "decision_evidence" in entry or "decisive_failure_evidence" in entry:
+            check_evidence(entry.get("decision_evidence"), lines, entry["task_success"])
+            check_evidence(entry.get("decisive_failure_evidence"), lines, not entry["task_success"])
+        else:
+            check_evidence(entry.get("success_evidence"), lines, True)
         harmful = entry.get("harmful_recommendations", [])
         require(isinstance(harmful, list), "invalid harmful recommendation annotations")
         for item in harmful:
             check_evidence(item.get("evidence"), lines, True)
-        critical_n, critical_d = counts["critical"]
-        recognized_n, risk_d = counts["risks"]
+        critical_counts, risk_counts = counts["critical"], counts["risks"]
+        critical_n, critical_d = critical_counts["hit"], sum(critical_counts.values())
+        risk_d = sum(risk_counts.values())
+        conservative_risk_misses = risk_counts["partial"] + risk_counts["miss"]
         novel_n, novel_d = counts["novel_candidates"]
         supported_n, claim_d = counts["claims"]
         rows.append({**answer, "KIR": critical_n / critical_d, "KIR_n": critical_n, "KIR_d": critical_d,
+                     "KIR_partial_count": critical_counts["partial"],
                      "PCIR": critical_n / critical_d if answer["kind"] == "paper" else None,
-                     "catastrophic_miss_rate": (risk_d - recognized_n) / risk_d, "catastrophic_miss_n": risk_d - recognized_n, "catastrophic_miss_d": risk_d,
+                     "catastrophic_miss_rate": conservative_risk_misses / risk_d, "catastrophic_miss_n": conservative_risk_misses, "catastrophic_miss_d": risk_d,
+                     "catastrophic_status_miss_n": risk_counts["miss"], "catastrophic_partial_count": risk_counts["partial"],
                      "MNY": novel_n / novel_d if novel_d else None, "MNY_n": novel_n, "MNY_d": novel_d,
                      "unsupported_claim_rate": (claim_d - supported_n) / claim_d if claim_d else None, "unsupported_claim_n": claim_d - supported_n, "unsupported_claim_d": claim_d,
                      "TaskSuccess": int(entry["task_success"]), "harmful_recommendations": len(harmful)})
-    result = {"version": "0.1", "mock": state["mock"], "run": str(run_dir), "run_sha256": digest(run_dir / "run.json"), "annotation_sha256": digest(annotations), "annotator": annotation["annotator"], "approval": state["approval"], "actual_unique_observable_tokens": state["actual_unique_observable_tokens"], "rows": rows}
+    result = {"version": "0.1", "mock": state["mock"], "run": str(run_dir), "run_sha256": digest(run_dir / "run.json"), "annotation_sha256": digest(annotations), "annotator": annotation["annotator"], "review_type": annotation["review_type"], "approval": state["approval"], "actual_unique_observable_tokens": state["actual_unique_observable_tokens"], "rows": rows}
     output.parent.mkdir(parents=True, exist_ok=True)
     write_json(output, result)
     return result
@@ -468,14 +524,14 @@ def summarize(scored, output):
     rows = result["rows"]
     require(rows, "no human-scored rows")
     output.mkdir(parents=True)
-    fields = ["task_id", "arm", "blind_id", "KIR", "KIR_n", "KIR_d", "PCIR", "catastrophic_miss_rate", "MNY", "MNY_n", "MNY_d", "unsupported_claim_rate", "unsupported_claim_n", "unsupported_claim_d", "TaskSuccess", "harmful_recommendations", "accounted_tokens", "matching_tokens", "latency_seconds"]
+    fields = ["task_id", "arm", "blind_id", "KIR", "KIR_n", "KIR_d", "KIR_partial_count", "PCIR", "catastrophic_miss_rate", "catastrophic_miss_n", "catastrophic_miss_d", "catastrophic_status_miss_n", "catastrophic_partial_count", "MNY", "MNY_n", "MNY_d", "unsupported_claim_rate", "unsupported_claim_n", "unsupported_claim_d", "TaskSuccess", "harmful_recommendations", "accounted_tokens", "matching_tokens", "latency_seconds"]
     with (output / "scores.tsv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, delimiter="\t", extrasaction="ignore")
         writer.writeheader()
         for row in rows:
             writer.writerow({key: "NA" if row.get(key) is None else row.get(key) for key in fields})
-    heading = "MOCK FIXTURE — NOT EMPIRICAL RESULTS" if result["mock"] else "Human-scored pilot (descriptive; no significance claims)"
-    notes = [f"# {heading}", "", f"Annotator: {result['annotator']}", f"Actual unique observable tokens: {result['actual_unique_observable_tokens']}", "", "Per-arm accounted tokens include shared council cost in each of H+D and H Alone; actual cost includes it once. PCIR equals KIR for paper tasks only. MNY and unsupported-claim rate are NA when their audited denominator is zero. Grounded/support source references and novelty/testability are human judgments; ID/quote checks do not prove them. Frontier is descriptive within each task (higher KIR, lower accounted observable tokens), not an uncertainty-aware efficiency claim.", "", "| Task | Arm | KIR | Tokens | TaskSuccess |", "|---|---|---:|---:|---:|"]
+    heading = "MOCK FIXTURE — NOT EMPIRICAL RESULTS" if result["mock"] else ("Human-scored pilot" if result["review_type"] == "human" else "AI-assisted blind review — provisional, not human scoring") + " (descriptive; no significance claims)"
+    notes = [f"# {heading}", "", f"Annotator: {result['annotator']}", f"Review type: {result['review_type']}", f"Actual unique observable tokens: {result['actual_unique_observable_tokens']}", "", "Per-arm accounted tokens include shared council cost in each of H+D and H Alone; actual cost includes it once. KIR/PCIR count only hit statuses; partial critical insights are reported separately. The catastrophic-miss numerator conservatively counts both partial and miss statuses, while raw status-miss and partial counts are also reported. PCIR equals KIR for paper tasks only. MNY and unsupported-claim rate are NA when their audited denominator is zero. Grounded/support source references and novelty/testability are reviewer judgments; ID/quote checks do not prove them. Frontier is descriptive within each task (higher KIR, lower accounted observable tokens), not an uncertainty-aware efficiency claim.", "", "| Task | Arm | KIR | Tokens | TaskSuccess |", "|---|---|---:|---:|---:|"]
     for row in rows:
         notes.append(f"| {row['task_id']} | {row['arm']} | {row['KIR']:.3f} | {row['accounted_tokens']} | {row['TaskSuccess']} |")
     (output / "summary.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
@@ -509,6 +565,7 @@ def main(argv=None):
     prep = commands.add_parser("prepare")
     prep.add_argument("--output", required=True)
     prep.add_argument("--tasks")
+    prep.add_argument("--task-id", action="append", dest="task_ids")
     check = commands.add_parser("validate")
     check.add_argument("--bundle", required=True)
     run = commands.add_parser("run")
@@ -528,7 +585,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "prepare":
-            result = {"approval_sha256": prepare(args.output, args.tasks), "status": "AWAITING_HUMAN_REVIEW; no live calls"}
+            result = {"approval_sha256": prepare(args.output, args.tasks, task_ids=args.task_ids), "status": "AWAITING_HUMAN_REVIEW; no live calls"}
         elif args.command == "validate":
             result = {"valid": True, "task_ids": validate(args.bundle)["task_ids"], "approval_sha256": digest(Path(args.bundle) / "manifest.json")}
         elif args.command == "run":

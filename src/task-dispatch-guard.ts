@@ -206,7 +206,13 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
         const child = state.dispatches.find(d => d.participant === p && d.taskID)?.taskID
         if (purpose === "normal" && round === 1) {
           if (args.task_id !== undefined) reject(state, "round 1 normal dispatch must omit task_id", p, round)
-        } else if (!child || args.task_id !== child) reject(state, "task_id continuity mismatch", p, round)
+        } else {
+          if (!child || (args.task_id !== undefined && args.task_id !== child)) reject(state, "task_id continuity mismatch", p, round)
+          // The runtime owns session continuity. Coordinator prompts should omit
+          // this opaque ID so a model cannot corrupt it while copying; an
+          // explicitly supplied value remains accepted only when exact.
+          args.task_id = child
+        }
         if (history.some(d => d.status === "active")) reject(state, "duplicate active participant dispatch", p, round)
         if (purpose === "normal") {
           if (history.length) reject(state, "duplicate normal dispatch; use the eligible retry or correction", p, round)
@@ -294,7 +300,7 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
             // Legacy standalone formatter may extract/normalise old transcripts. Live
             // Council participants must supply actual valid JSON, never repaired by us.
             JSON.parse(raw)
-            canonical = runResponseFormatter(raw, round === 1 ? "round1" : "round2", {timeoutMs: Math.max(1, Math.min(5000, state.deadlineMs - Date.now()))})
+            canonical = runResponseFormatter(raw, "council", {timeoutMs: Math.max(1, Math.min(5000, state.deadlineMs - Date.now()))})
           }
           catch (error) {
             if (error instanceof FormatterExecutionError) reject(state, "formatter infrastructure failure: " + error.message, participant, round)
@@ -305,7 +311,7 @@ export function createTaskDispatchGuard(options: GuardOptions = {}) {
               abortRun(state, "participant exhausted format corrections", participant, round)
               throw new Error(`Council aborted: participant exhausted format corrections (participant=${participant} round=${round}). ${diagnostic}. No further model calls are allowed.`)
             }
-            throw new Error(`Council format validation failed (participant=${participant} round=${round}): ${diagnostic}\nReturn this diagnostic to the SAME participant with task_id=${record.taskID} and marker [DEBATE_DISPATCH purpose=formatter-correction participant=${participant} round=${round} subagent_type=${record.agent}]. Ask for final valid JSON using existing context, without further research. Do not use purpose=retry. Correction ${corrections + 1}/${COUNCIL_LIMITS.maxFormatCorrections}; all dispatches remain subject to the global budget.`)
+            throw new Error(`Council format validation failed (participant=${participant} round=${round}): ${diagnostic}\nReturn this diagnostic to the SAME participant with marker [DEBATE_DISPATCH purpose=formatter-correction participant=${participant} round=${round} subagent_type=${record.agent}] and omit task_id; runtime injects the authoritative child session. Ask for final valid JSON using existing context, without further research. Do not use purpose=retry. Correction ${corrections + 1}/${COUNCIL_LIMITS.maxFormatCorrections}; all dispatches remain subject to the global budget.`)
           }
           state.validated[participant + ":" + round] = { callID: record.callID, formatterCallID: callID, digest: digest(canonical) }
           canonicalResults.set(k, canonical)

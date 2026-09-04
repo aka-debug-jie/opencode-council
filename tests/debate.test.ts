@@ -209,8 +209,8 @@ test("coordinator uses concrete configured markers and independent concurrent fi
 })
 
 test("coordinator preserves session continuity and canonical-only round transitions", () => {
-  assert.match(COORDINATOR_PROMPT, /Round 1 normal tasks omit task_id/)
-  assert.match(COORDINATOR_PROMPT, /Later normal tasks, retries, and formatter-correction tasks reuse that same participant task_id/)
+  assert.match(COORDINATOR_PROMPT, /Omit task_id from every task call/)
+  assert.match(COORDINATOR_PROMPT, /runtime saves and injects the authoritative participant child ID/)
   assert.match(COORDINATOR_PROMPT, /Do not advance to the next round until all 4 current turns are canonical/)
   assert.match(COORDINATOR_PROMPT, /other 3 exact canonical previous-round turns/)
   assert.match(COORDINATOR_PROMPT, /Wait for all 4 task results in a round/)
@@ -228,7 +228,8 @@ test("coordinator binds formatting to actual results, never self-repairs, and ca
 
 test("coordinator uses strict schemas and does not extend or shorten from advisory status", () => {
   assert.ok(COORDINATOR_PROMPT.includes('JSON {"turn":"..."}'))
-  assert.ok(COORDINATOR_PROMPT.includes('"consensus_reached":true|false,"recommend_stopping":true|false'))
+  assert.match(COORDINATOR_PROMPT, /every participant round to return exactly JSON \{"turn":"\.\.\."\}/)
+  assert.doesNotMatch(COORDINATOR_PROMPT, /"consensus_reached":true\|false/)
   assert.match(COORDINATOR_PROMPT, /Never request position, reasoning, evidence, concerns/)
   assert.match(COORDINATOR_PROMPT, /status fields are advisory only and cannot extend or shorten/)
   assert.match(COORDINATOR_PROMPT, /No extension rounds, Question calls, or transcript persistence/)

@@ -128,12 +128,34 @@ test("initial normal calls omit child IDs; continuation IDs cannot be invented o
   const first = fixture(t).guard
   await activate(first)
   await assert.rejects(before(first, "bad", args(1, 1, "normal", "child-1")), /must omit task_id/)
-  for (const child of [undefined, "arbitrary", "child-2"]) {
+  {
+    const { guard } = fixture(t)
+    await activate(guard)
+    for (const p of [1, 2, 3]) await turn(guard, p)
+    const omitted=args(1,2,"normal")
+    await before(guard,"injected",omitted)
+    assert.equal(omitted.task_id,"child-1")
+  }
+  for (const child of ["arbitrary", "child-2"]) {
     const { guard } = fixture(t)
     await activate(guard)
     for (const p of [1, 2, 3]) await turn(guard, p)
     await assert.rejects(before(guard, "bad", args(1, 2, "normal", child)), /task_id continuity mismatch/)
   }
+})
+
+test("runtime injects authoritative child ID when later calls omit opaque task_id", async t => {
+  const { guard } = fixture(t)
+  await activate(guard)
+  await before(guard, "first", args(1))
+  await after(guard, "first", '{"turn":"first"}', "child-1")
+  await format(guard, 1)
+  await turn(guard, 2); await turn(guard, 3)
+  const next = args(1, 2, "normal")
+  await before(guard, "next", next)
+  assert.equal(next.task_id, "child-1")
+  const wrong = args(2, 2, "normal", "corrupted-child")
+  await assert.rejects(before(guard, "wrong", wrong), /task_id continuity mismatch/)
 })
 test("duplicate call IDs retain one reservation and duplicate normal attempts abort", async t => {
   const same = fixture(t).guard

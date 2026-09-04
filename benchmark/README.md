@@ -9,7 +9,7 @@
 | 组别 | 方法 | 最终作答模型 |
 |---|---|---|
 | S1 | 单次直接解决 | `opencode-go/deepseek-v4-pro` |
-| S2 | 2–4 次互不见答案的独立搜索，再汇总 | DeepSeek V4 Pro |
+| S2 | 2–10 次互不见答案的独立搜索，再汇总 | DeepSeek V4 Pro |
 | H+D | 当前四人两轮 Council 报告，再独立判断 | DeepSeek V4 Pro |
 | H Alone | 同一 Council 报告，再独立判断 | `opencode-go/gpt-5.6-luna` |
 
@@ -66,7 +66,7 @@ python3 benchmark/engine.py run --bundle benchmark/local/pilot-review \
 每题顺序：共享 Council → H+D → H Alone → S1 → S2。固定顺序方便预算校准，但存在时间/服务负载混杂，不能用两题消除这一限制。
 
 - Council 正常 8 次 participant dispatch，原有全局上限 12、两次纠错边界、600 秒 deadline 保留。单模型步骤至多 300 秒；benchmark 不做自动重试。
-- S2 按 H+D 搜索＋最终答案的用量估计目标，预留相当于 H+D 最终作答的一次汇总预算，至少 2 次、最多 4 次独立搜索。实际匹配落在 ±20% 才标记 matched；超限、欠量或未知都如实标 unmatched，不再补调用追数。
+- S2 按 H+D 搜索＋最终答案的用量估计目标，预留相当于 H+D 最终作答的一次汇总预算，至少 2 次、最多 10 次独立搜索。首批4次上限明显欠量后才预注册提高上限；实际匹配落在 ±20% 才标记 matched，达到10次仍欠量则如实标 unmatched，不再补调用追数。
 - 累计 gross observable 字段和达 500,000 或运行到 60 分钟，停止后续阶段。它们是调用间准入阈值，在途调用可能使累计值越界。未知用量立即停止后续调用；非零退出保留失败，不以成功样本替换。
 - 每次 stage 只有显式输入文件可见；`bwrap` 不挂载题库、评分表、答案、宿主配置和仓库根。仅纯文本非隐藏路径可作为文件材料，避免 OpenCode 项目配置注入。没有可用隔离时直接失败，不退化成无沙箱。
 - Go 认证在执行时从现有认证记录读取，只把 `opencode-go` 条目经匿名内存传给隔离进程。不会写回凭据、载入其他 provider/MCP 配置或向日志打印 token。文件只读/工具权限隔离不意味着凭据对 OpenCode 进程不可见——该进程仍需认证来调用 API。
@@ -91,7 +91,7 @@ python3 benchmark/engine.py summarize --scored benchmark/local/scored.json \
   --output benchmark/local/summary
 ```
 
-KIR 为命中关键点数/预注册关键点数；论文 PCIR 使用该题同一分母。重大遗漏率为未识别风险数/预注册重大风险数，另记有害建议。TaskSuccess 由审核者按该题成功标准判定。MNY 分别标注 novel/grounded/testable，三者同时成立才入分子；同时报数量。候选必须记理由、反证和最低成本检验。无候选或无审计 claim 时相应比例为 NA，不是 0 或 100%。Unsupported Claim Rate 分母为人工审计的事实性 claim，未标注的 claim 不代表得到支持。
+KIR 为 Hit 数/预注册关键点数，Partial 单列且不进入分子；论文 PCIR 使用该题同一分母。重大遗漏率保守地将 Partial 和 Miss 都计入分子，并同时报告两者数量。TaskSuccess 由审核者按该题成功标准判定。MNY 分别标注 novel/grounded/testable，三者同时成立才入分子；同时报数量。候选必须记理由、反证和最低成本检验。无候选或无审计 claim 时相应比例为 NA，不是 0 或 100%。Unsupported Claim Rate 分母必须包含实际审计的 supported 和 unsupported factual claims；只列错误主张的表单不能估计该指标。`review_type` 明确区分 human 与 ai-assisted。
 
 候选和 supported claim 使用公开材料 ID 作为 `source_refs`。候选讨论原文、call ID 和会话保留在本地用于少数意见贡献溯源；出现先后不能直接证明因果贡献。评分入口要求完整试验；不完整运行首先报告 `run.json` 的失败/停止和未执行情况，不用幸存答案的分数声称全部任务成功。
 
@@ -101,6 +101,6 @@ KIR 为命中关键点数/预注册关键点数；论文 PCIR 使用该题同一
 
 故障诊断会分别保留推理前预检失败、进程退出/超时、Council 的持久化中止原因，以及独立的用量收集错误。字段缺失时保留 `known_observable_tokens`，但完整 gross 总量仍为未知并停止后续调用；不能把缺失量当作零。盲评索引显示预计/已有答案数量及完整性；评分入口除检查 complete 状态外，还要求每题四组恰好各一份，拒绝不完整或重复组别伪装成完整结果。
 
-Participant 的 `completed` 只表示任务执行结束，不表示 JSON 有效；空白、纯文字和不完整 JSON 均先交 formatter，再按原 participant 身份进行最多两次格式纠错。重复校验同一已失败结果会中止，避免 coordinator 陷入无效循环。formatter 自身缺失、崩溃或超时属于执行环境故障，不能消耗模型纠错去修复。原有12次dispatch、5steps、两次纠错和8,000字符边界不放宽。
+Participant 的 `completed` 只表示任务执行结束，不表示 JSON 有效；空白、纯文字和不完整 JSON 均先交 formatter，再按原 participant 身份进行最多两次格式纠错。重复校验同一已失败结果会中止，避免 coordinator 陷入无效循环。formatter 自身缺失、崩溃或超时属于执行环境故障，不能消耗模型纠错去修复。Council 产品仍保留12次dispatch、participant 5steps、两次纠错和8,000字符边界；为让单模型有机会读取三篇嵌套全文并保留最终作答步骤，benchmark 专用 `bench` agent 统一使用7steps。该差异属于方法定义并随审核包冻结。
 
 本地 mock 和真实二进制的无网络配置加载/隔离测试可证明控制链路的部分性质，不能证明真实 provider 输出格式、用量完整性或复杂论文题的实际成功率。必须等用户审核后由首批 live 补足。所有本地运行目录、会话和讨论均忽略，不提交；本轮不进行 Git 推送或 npm 发布。

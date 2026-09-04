@@ -42,7 +42,7 @@ test("completed malformed task is labelled for formatter without changing raw ev
   assert.equal(guard.getState("parent")!.dispatches[0].outputDigest,digest(raw))
   await assert.rejects(format(guard,1,"format-1"),error=>{
     assert.match(String(error),/purpose=formatter-correction participant=1 round=1 subagent_type=a/)
-    assert.match(String(error),/task_id=child-1/)
+    assert.match(String(error),/omit task_id; runtime injects the authoritative child session/)
     assert.match(String(error),/Do not use purpose=retry/)
     return true
   })

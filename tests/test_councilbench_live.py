@@ -60,7 +60,7 @@ class LiveAdapterTests(unittest.TestCase):
             root=Path(d);auth=root/'fake-auth'
             auth.write_text(json.dumps({'opencode-go':{'type':'api','key':'FAKE_ONLY'}}))
             args=['bwrap','--ro-bind',str(auth),'/data/opencode/auth.json','--chdir','/task','opencode','run']
-            with patch.object(live,'prepare_call',return_value=(root,args)),patch.object(live,'auth_path',return_value=auth),patch.object(live,'preflight_models'),patch.object(live,'run_bounded',return_value=(-15,'Stage deadline exceeded; process group terminated')):
+            with patch.object(live,'prepare_call',return_value=(root,args)),patch.object(live,'auth_path',return_value=auth),patch.object(live,'preflight_models'),patch.object(live,'preflight_agent'),patch.object(live,'run_bounded',return_value=(-15,'Stage deadline exceeded; process group terminated')):
                 result=live.call({'kind':'single','prompt':'no calls','timeout_seconds':30},root)
             self.assertEqual(result['status'],'failed')
             self.assertEqual(result['error'],'Stage deadline exceeded; process group terminated')
@@ -132,7 +132,7 @@ print('isolated')
             path=Path(d)/'data.db'
             db=sqlite3.connect(path)
             db.execute('CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT,data TEXT)')
-            data={'role':'assistant','providerID':'opencode-go','modelID':'deepseek-v4-pro',
+            data={'role':'assistant','finish':'stop','providerID':'opencode-go','modelID':'deepseek-v4-pro',
                   'tokens':{'total':130,'input':100,'output':20,'reasoning':10,'cache':{'read':0,'write':0}}}
             db.execute('INSERT INTO message VALUES(?,?,?)',('m1','s1',json.dumps(data)))
             db.commit()
@@ -153,7 +153,7 @@ print('isolated')
             path=Path(d)/'data.db'
             db=sqlite3.connect(path)
             db.execute('CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT,data TEXT)')
-            data={'role':'assistant','providerID':'opencode-go','modelID':'deepseek-v4-pro',
+            data={'role':'assistant','finish':'stop','providerID':'opencode-go','modelID':'deepseek-v4-pro',
                   'tokens':{'total':130,'input':100,'output':20,'reasoning':10,'cache':{'read':5}}}
             db.execute('INSERT INTO message VALUES(?,?,?)',('m1','s1',json.dumps(data)))
             db.commit();db.close()
@@ -162,6 +162,33 @@ print('isolated')
             self.assertEqual(usage['known_observable_tokens'],135)
             self.assertEqual(usage['usage']['input'],100)
             self.assertFalse(usage['provenance']['usage_complete'])
+
+    def test_unfinished_assistant_usage_is_known_only_not_complete(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'data.db';db=sqlite3.connect(path)
+            db.execute('CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT,data TEXT)')
+            data={'role':'assistant','providerID':'opencode-go','modelID':'muse-spark-1.3-contributor',
+                  'tokens':{'total':0,'input':100,'output':0,'reasoning':0,'cache':{'read':20,'write':0}}}
+            db.execute('INSERT INTO message VALUES(?,?,?)',('pending','s1',json.dumps(data)));db.commit();db.close()
+            usage=live.usage_from_database(path)
+            self.assertEqual(usage['known_observable_tokens'],120)
+            self.assertIsNone(usage['observable_tokens'])
+            self.assertIsNone(usage['matching_tokens'])
+            self.assertFalse(usage['provenance']['usage_complete'])
+
+    def test_dead_process_active_council_is_persisted_aborted_without_model(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory=Path(d);run='timed-out';session='parent'
+            registry={'participants':[{'agent':x,'description':x,'model':'test/'+x} for x in ['a','b','c']],
+                      'sets':{'council':['a','b','c']},'defaultSet':'council'}
+            state={'version':1,'runId':run,'sessionID':session,'deadlineMs':9999999999999,'rounds':1,
+                   'registry':registry,'status':'active','dispatches':[],'validated':{},
+                   'continuations':0,'continuedMessageIDs':[]}
+            (directory/(run+'.json')).write_text(json.dumps(state))
+            live.abort_council_state(directory,run,session,'stage timeout')
+            result=json.loads((directory/(run+'.json')).read_text())
+            self.assertEqual(result['status'],'aborted')
+            self.assertEqual(result['abort']['reason'],'stage timeout')
 
     def test_real_opencode_config_load_offline_with_fake_auth(self):
         binary=shutil.which('opencode')
@@ -173,7 +200,7 @@ print('isolated')
                 (root/name).mkdir(parents=True,exist_ok=True)
             (root/'runtime/bin/opencode').touch()
             (root/'auth-fixture').write_text('{}')
-            config={'permission':live.READONLY,'agent':{'bench':{'mode':'primary','model':live.SINGLE,'permission':live.READONLY}}}
+            config={'permission':live.READONLY,'agent':{'bench':{'mode':'primary','model':live.SINGLE,'steps':7,'permission':live.READONLY}}}
             (root/'config/opencode/opencode.json').write_text(json.dumps(config))
             args=live.sandbox_command(root,Path(binary).resolve(),root/'auth-fixture',
                                       ['opencode','--pure','debug','agent','bench'],network=False)
@@ -184,6 +211,52 @@ print('isolated')
             deny_bash=[p for p in data['permission'] if p['permission']=='bash']
             self.assertTrue(deny_bash)
             self.assertTrue(all(p['action']=='deny' for p in deny_bash))
+            read_rules=[p for p in data['permission'] if p['permission']=='read']
+            self.assertEqual(read_rules[-4:],[
+                {'permission':'read','pattern':'*','action':'allow'},
+                {'permission':'read','pattern':'*.env','action':'deny'},
+                {'permission':'read','pattern':'*.env.*','action':'deny'},
+                {'permission':'read','pattern':'*.env.example','action':'allow'},
+            ])
+            external=[p for p in data['permission'] if p['permission']=='external_directory']
+            self.assertEqual([p for p in external if p.get('pattern')=='*'][-1]['action'],'deny')
+            self.assertEqual(data['steps'],7)
+
+    def test_actual_offline_agent_reads_nested_material_without_model_inference(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);auth=root/'fake-auth';auth.write_text('{}')
+            request={'kind':'single','model':live.SINGLE,'id':'read-check','prompt':'no inference',
+                     'materials':{'papers/canary.txt':'NESTED_MATERIAL_CANARY'}}
+            stage,args=live.prepare_call(request,root/'call',auth_override=auth,network=False)
+            at=args.index('--chdir')
+            args=args[:at+2]+['opencode','--pure','debug','agent','bench','--tool','read',
+                              '--params','{"filePath":"/task/papers/canary.txt"}']
+            result=subprocess.run(args,text=True,capture_output=True,timeout=20)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('NESTED_MATERIAL_CANARY',result.stdout)
+
+    def test_agent_preflight_accepts_effective_boundary_and_rejects_old_read_rule(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);out=root/'agent-preflight.stdout';err=root/'agent-preflight.stderr'
+            rules=[{'permission':'read','pattern':'*','action':'allow'},
+                   {'permission':'read','pattern':'*.env','action':'deny'},
+                   {'permission':'read','pattern':'*.env.*','action':'deny'},
+                   {'permission':'external_directory','pattern':'*','action':'deny'}]
+            tools={name:value for name,value in {'read':True,'grep':True,'glob':True,'bash':False,'edit':False,
+                   'write':False,'task':False,'webfetch':False,'websearch':False,'skill':False}.items()}
+            def fake_run(*args,**kwargs):
+                out.write_text(json.dumps({'steps':7,'permission':rules,'tools':tools}));err.write_text('');return 0,None
+            with patch.object(live,'run_bounded',side_effect=fake_run):
+                live.preflight_agent(['bwrap','--chdir','/task'],root,3)
+                tools['edit']=None;tools['write']=None
+                live.preflight_agent(['bwrap','--chdir','/task'],root,3)
+                tools['edit']=True
+                with self.assertRaisesRegex(ValueError,'permissions/steps'):
+                    live.preflight_agent(['bwrap','--chdir','/task'],root,3)
+                tools['edit']=None
+                rules[0]={'permission':'read','pattern':'/task/*','action':'allow'}
+                with self.assertRaisesRegex(ValueError,'permissions/steps'):
+                    live.preflight_agent(['bwrap','--chdir','/task'],root,3)
 
     def test_final_report_is_bound_to_normal_stopped_message(self):
         with tempfile.TemporaryDirectory() as d:
@@ -202,6 +275,10 @@ print('isolated')
     def test_final_answer_requires_all_six_nonempty_ordered_sections(self):
         valid='\n\n'.join('# '+name+'\nEvidence '+str(i) for i,name in enumerate(live.FINAL_SECTIONS))
         self.assertEqual(live.validate_final_answer(valid),valid)
+        qualified=valid.replace('# Falsification tests','# Falsification tests (new proposal)')
+        self.assertEqual(live.validate_final_answer(qualified),qualified)
+        bold='\n\n'.join('**'+name+'.** inline evidence '+str(i) for i,name in enumerate(live.FINAL_SECTIONS))
+        self.assertEqual(live.validate_final_answer(bold),bold)
         with self.assertRaisesRegex(ValueError,'six ordered'):
             live.validate_final_answer('Success')
         invalid='\n\n'.join('# '+name+('\nvalue' if i else '') for i,name in enumerate(live.FINAL_SECTIONS))

@@ -2,19 +2,21 @@
   "task_id":"paper-coordination",
   "status":"draft",
   "critical_insights":[
-    {"id":"P1","description":"Separate external consistency/serial order from preserving specified application invariants; different guarantees can explain apparent disagreement.","evidence":"Spanner sections 1,4; Coordination Avoidance sections 2-4"},
-    {"id":"P2","description":"TrueTime exposes bounded uncertainty; timestamp selection and waiting are not elimination of replication/transaction coordination.","evidence":"Spanner sections 3,4.1,4.2.1"},
-    {"id":"P3","description":"Calvin moves agreement ahead of execution and deterministic locking reduces contention footprint; it does not make network agreement free.","evidence":"Calvin sections 1.1-1.3,2,3"},
-    {"id":"P4","description":"Recognize Calvin transaction planning/read-write-set and nondeterminism requirements; include their cost when extrapolating to the proposed service.","evidence":"Calvin sections 2,3.2"},
-    {"id":"P5","description":"Coordination-free correctness is conditional on invariant confluence for the specified operations, merge and invariants; not a universal claim for transfers or stock decrements.","evidence":"Coordination Avoidance sections 3,4,5"},
-    {"id":"P6","description":"Do not equate throughput, tail latency and partition-time availability; Calvin explicitly distinguishes its availability usage from CAP availability.","evidence":"Calvin page 1 footnote 1 and section 6; other papers' evaluation sections"},
-    {"id":"P7","description":"A discriminating experiment holds workload, resources and required guarantee fixed while varying contention, cross-partition ratio, network latency and relevant mechanism assumptions; measure correctness as well as performance.","evidence":"Comparative experimental design requirement; no direct three-way comparison is supplied"},
-    {"id":"P8","description":"Make the unresolved issue concrete: which service invariants and transaction classes can avoid coordination, and when remaining coordination becomes the bottleneck; ground a conditional hybrid rather than claiming an already-proven universal winner.","evidence":"Synthesis from the three papers; explicitly a task-level inference"}
+    {"id":"PCI1","description":"Distinguish external consistency or serialization order from preservation of specified application invariants; the papers can address different correctness questions without contradiction.","evidence":"Paper-1 sections 1 and 4; Paper-3 sections 2-4"},
+    {"id":"PCI2","description":"Explain that TrueTime exposes bounded clock uncertainty and supports timestamp-ordering rules, but does not replace replication agreement or transaction coordination.","evidence":"Paper-1 sections 3, 4.1 and 4.2.1"},
+    {"id":"PCI3","description":"Explain that Calvin places transaction-sequence agreement before execution and uses deterministic locking to shorten distributed transactions' contention footprints, while sequencing and replication still have costs.","evidence":"Paper-2 sections 1.1-1.3, 2 and 3"},
+    {"id":"PCI4","description":"Account for Calvin's need to determine transaction read/write sets before execution and to handle nondeterministic results explicitly when applying it to this service.","evidence":"Paper-2 sections 2 and 3.2"},
+    {"id":"PCI5","description":"State that coordination avoidance is conditional on invariant confluence for a particular set of operations, merge behavior and invariants, rather than universal for transfers or stock decrements.","evidence":"Paper-3 sections 3-5"},
+    {"id":"PCI6","description":"Keep throughput, tail latency and partition-time availability distinct; note that Calvin's stated high-availability usage is not CAP availability.","evidence":"Paper-2 page 1 footnote 1 and section 6; Paper-1 and Paper-3 evaluation discussions"},
+    {"id":"PCI7","description":"Require the distinguishing experiment to hold the required correctness guarantee, workload definition and resource budget fixed across mechanisms.","evidence":"Task-level experimental-design requirement; the supplied papers do not provide a controlled three-way comparison"},
+    {"id":"PCI8","description":"Vary contention, cross-partition transaction ratio and network conditions so the experiment can expose mechanism-specific costs instead of reporting one aggregate throughput number.","evidence":"Task-level experiment inferred from Paper-1 wide-area costs, Paper-2 contention analysis and Paper-3 coordination costs"},
+    {"id":"PCI9","description":"Use an explicit correctness oracle and state competing predictions whose outcomes distinguish preordering/contention-footprint effects from safe coordination avoidance or weaker guarantees.","evidence":"Task-level discriminating-test requirement grounded in the distinct mechanisms of Paper-1, Paper-2 and Paper-3"},
+    {"id":"PCI10","description":"Identify the unresolved service question as which invariant and transaction classes are safely coordination-free, and under what workload or network regime the remaining coordination becomes the bottleneck.","evidence":"Synthesis across Paper-1, Paper-2 and Paper-3; explicitly a task-level inference, not a published head-to-head result"}
   ],
   "catastrophic_risks":[
-    {"id":"R1","description":"Treating bounded clock uncertainty as perfect clocks or assuming TrueTime alone replaces agreement.","evidence":"Spanner sections 3-4"},
-    {"id":"R2","description":"Allowing arbitrary stock decrements/transfers to merge without validating relevant invariants, causing oversell or conservation failures.","evidence":"Coordination Avoidance sections 3-5"},
-    {"id":"R3","description":"Claiming the papers directly prove a universal performance winner or equivalent guarantees under every partition/workload.","evidence":"Different system models and experimental conditions; Calvin page 1 footnote 1"}
+    {"id":"PRI1","description":"Treating bounded clock uncertainty as perfect clocks or assuming TrueTime alone replaces agreement.","evidence":"Paper-1 sections 3-4"},
+    {"id":"PRI2","description":"Allowing arbitrary stock decrements or transfers to merge without validating the relevant invariants, risking oversell or conservation failure.","evidence":"Paper-3 sections 3-5"},
+    {"id":"PRI3","description":"Claiming that the papers directly prove a universal performance winner or equivalent guarantees across all partitions and workloads.","evidence":"The papers use different system models and evaluations; Paper-2 page 1 footnote 1 explicitly distinguishes availability terminology"}
   ],
   "competing_solutions":[
     "Coordinate all relevant multi-record operations under a sufficiently strong transaction guarantee, accepting its cost.",
@@ -23,7 +25,7 @@
   ],
   "high_value_insights":[
     "Distinguish moving coordination outside lock-holding intervals from removing the semantic need for coordination.",
-    "Use a correctness-matched factorial microbenchmark to distinguish contention-footprint effects from weaker-guarantee effects."
+    "Use a correctness-matched factorial microbenchmark to distinguish contention-footprint effects from safely coordination-free operation or weaker-guarantee effects."
   ],
   "success_criteria":[
     "Explains the apparent conflict without inventing contradictory experimental results or equating unlike correctness guarantees.",

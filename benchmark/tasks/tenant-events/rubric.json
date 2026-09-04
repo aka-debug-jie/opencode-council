@@ -7,9 +7,10 @@
     {"id":"T3","description":"Separate check-then-write is racy; database mutation and dedup decision require one transactional uniqueness/locking boundary; acknowledge after durable completion policy.","evidence":"SPEC-4, TRACE-B"},
     {"id":"T4","description":"Database atomicity does not make billing exactly-once. Preserve ambiguous outcomes, stable external idempotency keys and reconciliation/outbox state; address the 24-hour API retention boundary.","evidence":"SPEC-1/4, TRACE-B"},
     {"id":"T5","description":"Use version/checkpoint-aware backfill and a reconciliation or fencing strategy; sequential dual writes can diverge or replay stale state.","evidence":"SPEC-5, TRACE-C"},
-    {"id":"T6","description":"Fence or route old workers/messages through a schema epoch; handle sequence ordering of noncommutative operations rather than deduplication alone.","evidence":"SPEC-1/3, TRACE-E"},
-    {"id":"T7","description":"Rollback must retain a usable route and preserve v2-only writes for the required 72 hours; a reader flag alone or a 24-hour destructive drop is insufficient.","evidence":"SPEC-5, TRACE-E"},
-    {"id":"T8","description":"Retention must cover declared replay semantics or specify safe archived tombstone/reconciliation handling; 24-hour dedup pruning conflicts with retries and historical imports.","evidence":"SPEC-1/6"}
+    {"id":"T6","description":"Carry a schema epoch and trustworthy tenant provenance for queued messages; fence or safely route old workers and old tenant-less messages during cutover.","evidence":"SPEC-2/3/5/6, TRACE-D/E"},
+    {"id":"T7","description":"Enforce sequence ordering for noncommutative operations rather than treating deduplication alone as sufficient.","evidence":"SPEC-1, TRACE-E"},
+    {"id":"T8","description":"Rollback must retain a usable route and preserve v2-only writes for the required 72 hours; a reader flag alone or a 24-hour destructive drop is insufficient.","evidence":"SPEC-5, TRACE-E"},
+    {"id":"T9","description":"Retention must cover declared replay semantics or specify safe archived tombstone/reconciliation handling; 24-hour dedup pruning conflicts with retries and historical imports.","evidence":"SPEC-1/6"}
   ],
   "catastrophic_risks": [
     {"id":"R1","description":"Cross-tenant data mutation or silent suppression due to unscoped keys/context.","evidence":"SPEC-1/2/3, TRACE-A/D"},

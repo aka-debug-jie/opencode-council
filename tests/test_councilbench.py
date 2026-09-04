@@ -55,16 +55,17 @@ class CouncilBenchTest(unittest.TestCase):
     def annotate(self):
         annotation = engine.read_json(self.run / "annotations.template.json")
         annotation["annotator"] = "Human fixture (not empirical scores)"
+        annotation["review_type"] = "human"
         evidence = [{"quote": "Evidence must be checked.", "start_line": 2, "end_line": 2}]
         for entry in annotation["answers"]:
             for index, insight in enumerate(entry["critical"]):
-                insight["present"] = index < 3
-                insight["evidence"] = evidence if insight["present"] else []
+                insight["status"] = "hit" if index < 3 else "miss"
+                insight["evidence"] = evidence if insight["status"] == "hit" else []
             for index, risk in enumerate(entry["risks"]):
-                risk["recognized"] = index == 0
-                risk["evidence"] = evidence if risk["recognized"] else []
+                risk["status"] = "hit" if index == 0 else "miss"
+                risk["evidence"] = evidence if risk["status"] == "hit" else []
             entry["task_success"] = False
-            entry["success_evidence"] = evidence
+            entry["decisive_failure_evidence"] = evidence
         path = self.root / "human.json"
         engine.write_json(path, annotation)
         return path, annotation, evidence
@@ -80,6 +81,30 @@ class CouncilBenchTest(unittest.TestCase):
         self.assertFalse((self.bundle / ".live.execution.json").exists())
         with self.assertRaisesRegex(engine.BenchError, "already exists"):
             engine.prepare(self.bundle, source_root=self.source)
+
+    def test_prepare_filters_exact_task_ids_and_cli_repeats(self):
+        other_dir = self.source / "benchmark/tasks/other"
+        other_dir.mkdir(parents=True)
+        other_task = {**self.task, "id": "other", "materials": [{"id": "other-material", "title": "Other", "text": "Other public dossier"}]}
+        other_rubric = {**self.rubric, "task_id": "other"}
+        engine.write_json(other_dir / "task.json", other_task)
+        engine.write_json(other_dir / "rubric.json", other_rubric)
+        filtered = self.root / "filtered"
+        engine.prepare(filtered, source_root=self.source, task_ids=["sample"])
+        self.assertEqual(engine.read_json(filtered / "manifest.json")["task_ids"], ["sample"])
+        self.assertTrue((filtered / "tasks/sample/task.json").is_file())
+        self.assertFalse((filtered / "tasks/other").exists())
+        engine.write_json(other_dir / "rubric.json", {"task_id": "other", "status": "draft"})
+        isolated = self.root / "isolated"
+        engine.prepare(isolated, source_root=self.source, task_ids=["sample"])
+        self.assertEqual(engine.read_json(isolated / "manifest.json")["task_ids"], ["sample"])
+        with self.assertRaisesRegex(engine.BenchError, "unknown task IDs: missing"):
+            engine.prepare(self.root / "unknown", source_root=self.source, task_ids=["missing"])
+        with self.assertRaisesRegex(engine.BenchError, "duplicate requested task IDs"):
+            engine.prepare(self.root / "duplicate", source_root=self.source, task_ids=["sample", "sample"])
+        with patch.object(engine, "prepare", return_value="a" * 64) as prepare_mock:
+            self.assertEqual(engine.main(["prepare", "--output", "bundle", "--tasks", "tasks", "--task-id", "sample", "--task-id", "other"]), 0)
+        prepare_mock.assert_called_once_with("bundle", "tasks", task_ids=["sample", "other"])
 
     def test_routing_shared_prompt_independence_and_no_gold(self):
         state = self.execute()
@@ -106,16 +131,26 @@ class CouncilBenchTest(unittest.TestCase):
         self.assertFalse(arms["S2"]["matching"]["matched"])
         self.assertEqual(arms["S2"]["matching"]["relative_error"], 0.5)
 
-    def test_s2_stops_at_four_independent_searches(self):
+    def test_s2_stops_at_ten_independent_searches(self):
         def adapter(request, workdir):
             result = self.adapter(request, workdir)
             result["matching_tokens"] = 10000 if request["kind"] == "council" else 100
             return result
         state = self.execute(adapter)
-        self.assertEqual(len(self.calls), 9)
-        self.assertEqual(len([r for r in state["calls"] if r["label"].startswith("S2-search")]), 4)
-        self.assertEqual(state["answers"][-1]["matching"]["searches"], 4)
+        self.assertEqual(len(self.calls), 15)
+        self.assertEqual(len([r for r in state["calls"] if r["label"].startswith("S2-search")]), 10)
+        self.assertEqual(state["answers"][-1]["matching"]["searches"], 10)
         self.assertFalse(state["answers"][-1]["matching"]["matched"])
+
+    def test_s2_adaptively_stops_after_target_is_covered(self):
+        def adapter(request, workdir):
+            result = self.adapter(request, workdir)
+            result["matching_tokens"] = 300 if request["kind"] == "council" else 100
+            return result
+        state = self.execute(adapter)
+        searches = [record for record in state["calls"] if record["label"].startswith("S2-search")]
+        self.assertEqual(len(searches), 3)
+        self.assertEqual(state["answers"][-1]["matching"]["searches"], 3)
 
     def test_unknown_matching_only_permits_minimum_and_flags_unmatched(self):
         def adapter(request, workdir):
@@ -173,6 +208,16 @@ class CouncilBenchTest(unittest.TestCase):
         rubric["critical_insights"][1]["id"] = "I0"
         with self.assertRaisesRegex(engine.BenchError, "duplicate rubric"):
             engine.validate_task(self.task, rubric, self.task_dir)
+
+    def test_paper_task_uses_distinct_material_and_rubric_ids(self):
+        directory = Path(__file__).resolve().parents[1] / "benchmark/tasks/paper-coordination"
+        task = engine.read_json(directory / "task.json")
+        rubric = engine.read_json(directory / "rubric.json")
+        engine.validate_task(task, rubric, directory)
+        self.assertEqual([item["id"] for item in task["materials"]], ["Paper-1", "Paper-2", "Paper-3"])
+        self.assertEqual([item["id"] for item in rubric["critical_insights"]], [f"PCI{i}" for i in range(1, 11)])
+        self.assertEqual([item["id"] for item in rubric["catastrophic_risks"]], [f"PRI{i}" for i in range(1, 4)])
+        self.assertTrue(all(paper_id in task["prompt"] for paper_id in ("Paper-1", "Paper-2", "Paper-3")))
 
     def test_assets_reject_escape_symlink_and_rubric(self):
         for filename in ("../rubric.json", "/etc/passwd", "rubric.json", ".opencode/opencode.json", "AGENTS.md", "papers/.hidden.txt", "../a.txt"):
@@ -288,19 +333,39 @@ class CouncilBenchTest(unittest.TestCase):
         self.assertEqual(set(mapping), {answer["blind_id"] for answer in state["answers"]})
         self.assertEqual({entry["arm"] for entry in mapping.values()}, {"S1", "S2", "H+D", "H Alone"})
 
+    def test_annotation_template_uses_status_and_explicit_audit_fields(self):
+        self.execute()
+        template = engine.read_json(self.run / "annotations.template.json")
+        self.assertEqual(template["review_type"], "")
+        self.assertEqual(template["answer_evidence_fields"], ["quote", "start_line", "end_line"])
+        self.assertIn("counted", template["novel_candidate_fields"])
+        self.assertEqual(template["audited_claim_fields"], ["id", "supported", "evidence", "source_refs", "reason"])
+        for entry in template["answers"]:
+            self.assertTrue(all(item["status"] is None and "present" not in item for item in entry["critical"]))
+            self.assertTrue(all(item["status"] is None and "recognized" not in item for item in entry["risks"]))
+            self.assertEqual(entry["decision_evidence"], [])
+            self.assertEqual(entry["decisive_failure_evidence"], [])
+
     def test_human_scoring_denominators_and_summary(self):
         self.execute()
         path, annotation, evidence = self.annotate()
         for entry in annotation["answers"]:
-            entry["novel_candidates"] = [{"id": "N1", "novel": True, "grounded": True, "testable": True, "evidence": evidence, "source_refs": ["public1"], "rationale": "fixture", "falsifier": "counterexample", "cheapest_test": "unit test"}, {"id": "N2", "novel": False, "grounded": True, "testable": True, "evidence": evidence, "source_refs": ["public1"], "rationale": "fixture", "falsifier": "counterexample", "cheapest_test": "unit test"}]
-            entry["claims"] = [{"id": "C1", "supported": True, "evidence": evidence, "source_refs": ["source1"]}, {"id": "C2", "supported": False, "evidence": evidence, "source_refs": []}]
+            entry["critical"][2]["status"] = "partial"
+            entry["critical"][2]["evidence"] = evidence
+            entry["risks"][1]["status"] = "partial"
+            entry["risks"][1]["evidence"] = evidence
+            entry["novel_candidates"] = [{"id": "N1", "novel": True, "grounded": True, "testable": True, "counted": True, "evidence": evidence, "source_refs": ["public1"], "rationale": "fixture", "falsifier": "counterexample", "cheapest_test": "unit test"}, {"id": "N2", "novel": False, "grounded": True, "testable": True, "counted": False, "evidence": evidence, "source_refs": ["public1"], "rationale": "fixture", "falsifier": "counterexample", "cheapest_test": "unit test"}]
+            entry["claims"] = [{"id": "C1", "supported": True, "evidence": evidence, "source_refs": ["source1"], "reason": "source supports it"}, {"id": "C2", "supported": False, "evidence": evidence, "source_refs": [], "reason": "no supplied support"}]
         engine.write_json(path, annotation)
         scored_path = self.root / "scored.json"
         result = engine.score(self.run, path, scored_path)
         for row in result["rows"]:
-            self.assertEqual((row["KIR_n"], row["KIR_d"], row["KIR"]), (3, 5, 0.6))
-            self.assertEqual(row["PCIR"], 0.6)
+            self.assertEqual((row["KIR_n"], row["KIR_d"], row["KIR"]), (2, 5, 0.4))
+            self.assertEqual(row["KIR_partial_count"], 1)
+            self.assertEqual(row["PCIR"], 0.4)
             self.assertEqual(row["catastrophic_miss_rate"], 0.5)
+            self.assertEqual(row["catastrophic_status_miss_n"], 0)
+            self.assertEqual(row["catastrophic_partial_count"], 1)
             self.assertEqual((row["MNY_n"], row["MNY_d"], row["MNY"]), (1, 2, 0.5))
             self.assertEqual(row["unsupported_claim_rate"], 0.5)
             self.assertEqual(row["TaskSuccess"], 0)
@@ -309,6 +374,20 @@ class CouncilBenchTest(unittest.TestCase):
         self.assertTrue((output / "scores.tsv").is_file())
         self.assertIn("MOCK FIXTURE", (output / "summary.md").read_text())
         ET.parse(output / "quality-cost.svg")
+
+    def test_legacy_present_recognized_and_success_evidence_still_score(self):
+        self.execute()
+        path, annotation, _ = self.annotate()
+        for entry in annotation["answers"]:
+            for item in entry["critical"]:
+                item["present"] = item.pop("status") == "hit"
+            for item in entry["risks"]:
+                item["recognized"] = item.pop("status") == "hit"
+            entry["success_evidence"] = entry.pop("decisive_failure_evidence")
+            entry.pop("decision_evidence")
+        engine.write_json(path, annotation)
+        result = engine.score(self.run, path, self.root / "legacy-scored.json")
+        self.assertTrue(all(row["KIR"] == 0.6 for row in result["rows"]))
 
     def test_no_candidates_or_claims_is_null_not_zero(self):
         self.execute()
@@ -321,7 +400,7 @@ class CouncilBenchTest(unittest.TestCase):
 
     def test_unfilled_template_cannot_score(self):
         self.execute()
-        with self.assertRaisesRegex(engine.BenchError, "human annotator"):
+        with self.assertRaisesRegex(engine.BenchError, "annotator"):
             engine.score(self.run, self.run / "annotations.template.json", self.root / "scored.json")
 
     def test_score_rejects_complete_status_with_missing_arm(self):

@@ -1,6 +1,7 @@
-# Blind human review form
+# Blind review form
 
 Reviewer:
+Review type: [ ] Human  [ ] AI-assisted
 Date:
 
 Use exact quotes and 1-based line numbers. Check only one Task Success option per answer.

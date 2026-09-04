@@ -7,7 +7,7 @@ import {
 } from "./transcript-persistence.ts"
 import { COUNCIL_LIMITS } from "./limits.ts"
 
-export type DebateResponseSchema = "round1" | "round2"
+export type DebateResponseSchema = "round1" | "round2" | "council"
 
 export const FORMAT_DEBATE_RESPONSE_TOOL = "format_debate_response"
 
@@ -83,7 +83,7 @@ export function createResponseFormatterTool(moduleUrl: string = import.meta.url)
     description: "Validate and canonicalise a debate participant response.",
     args: {
       response: tool.schema.string().describe("Participant response text to validate and canonicalise."),
-      schema: tool.schema.enum(["round1", "round2"]).describe("Debate response schema to enforce."),
+      schema: tool.schema.enum(["round1", "round2", "council"]).describe("Debate response schema to enforce."),
     },
     async execute({ response, schema }) {
       return runResponseFormatter(response, schema, { moduleUrl })

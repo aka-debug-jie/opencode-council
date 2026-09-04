@@ -130,6 +130,25 @@ class FormatResponseTests(unittest.TestCase):
         ):
             formatter_module().format_response('{"turn":"needs statuses"}', "round2")
 
+    def test_council_turn_accepts_current_and_paired_legacy_shapes(self) -> None:
+        module = formatter_module()
+        self.assertEqual(
+            module.format_response('{"turn":"current"}', "council"),
+            '{"turn": "current"}',
+        )
+        legacy = module.format_response(
+            '{"turn":"legacy","consensus_reached":false,"recommend_stopping":true}',
+            "council",
+        )
+        self.assertEqual(
+            json.loads(legacy),
+            {"turn": "legacy", "consensus_reached": False, "recommend_stopping": True},
+        )
+        with self.assertRaisesRegex(module.ResponseFormatError, "supplied together"):
+            module.format_response(
+                '{"turn":"partial","consensus_reached":false}', "council"
+            )
+
     def test_unexpected_round_one_fields_are_rejected(self) -> None:
         with self.assertRaisesRegex(
             formatter_module().ResponseFormatError,
@@ -165,7 +184,7 @@ class FormatResponseTests(unittest.TestCase):
 
     def test_unknown_schema_is_rejected(self) -> None:
         with self.assertRaisesRegex(
-            formatter_module().ResponseFormatError, "schema must be round1 or round2"
+            formatter_module().ResponseFormatError, "schema must be round1, round2, or council"
         ):
             formatter_module().format_response('{"turn":"response"}', "round3")
 

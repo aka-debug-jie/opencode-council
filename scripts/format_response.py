@@ -16,7 +16,9 @@ class ResponseFormatError(ValueError):
 _EXPECTED_FIELDS: dict[str, frozenset[str]] = {
     "round1": frozenset(("turn",)),
     "round2": frozenset(("turn", "consensus_reached", "recommend_stopping")),
+    "council": frozenset(("turn",)),
 }
+_COUNCIL_OPTIONAL_FIELDS = frozenset(("consensus_reached", "recommend_stopping"))
 
 
 def _extract_json_object(raw: str) -> str:
@@ -88,7 +90,8 @@ def _validate_fields(response: dict[str, Any], schema: str) -> None:
     expected = _EXPECTED_FIELDS[schema]
     actual = set(response)
     missing = sorted(expected - actual)
-    unexpected = sorted(actual - expected)
+    allowed = expected | (_COUNCIL_OPTIONAL_FIELDS if schema == "council" else frozenset())
+    unexpected = sorted(actual - allowed)
     errors: list[str] = []
     if missing:
         errors.append(f"missing required field(s): {', '.join(missing)}")
@@ -103,7 +106,10 @@ def _validate_values(response: dict[str, Any], schema: str) -> None:
     if not isinstance(turn, str) or not turn.strip():
         raise ResponseFormatError("turn must be a non-empty string")
 
-    if schema == "round2":
+    status_fields = set(response) & _COUNCIL_OPTIONAL_FIELDS
+    if schema == "council" and status_fields and status_fields != _COUNCIL_OPTIONAL_FIELDS:
+        raise ResponseFormatError("council advisory status fields must be supplied together")
+    if schema == "round2" or status_fields:
         for field in ("consensus_reached", "recommend_stopping"):
             if not isinstance(response[field], bool):
                 raise ResponseFormatError(f"{field} must be a boolean")
@@ -112,7 +118,7 @@ def _validate_values(response: dict[str, Any], schema: str) -> None:
 def format_response(raw: str, schema: str) -> str:
     """Extract, validate, and canonicalise a response for ``schema``."""
     if schema not in _EXPECTED_FIELDS:
-        raise ResponseFormatError("schema must be round1 or round2")
+        raise ResponseFormatError("schema must be round1, round2, or council")
     if not isinstance(raw, str):
         raise ResponseFormatError("raw response must be a string")
 
@@ -130,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         schema = arguments[1]
     else:
         print(
-            "format_response: usage: format_response.py [--schema] round1|round2",
+                "format_response: usage: format_response.py [--schema] round1|round2|council",
             file=sys.stderr,
         )
         return 2
