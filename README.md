@@ -10,6 +10,8 @@
 
 Council 将简短任务交给 OpenCode sidecar：三位中立、只读的 participant 独立分析，再对彼此的结果进行交叉评阅。GPT 5.6 Luna 只负责调度与校验；当前 Codex 保留完整上下文、最终判断和后续编码权。
 
+**主任务大模型 → 有界顾问讨论 → 主任务大模型判断与实施。** Codex 主会话可以使用 Sol 等大模型；Sol 是示例，不是插件固定指定的模型。Codex 主模型与 OpenCode sidecar 独立配置，Council 不会将主模型替换为 Luna，也不会把它作为第四位 participant。
+
 只在你明确说“开个 council”“quick council”“critical council”或使用 `$codex-council` 时调用，不自动接管任务。
 
 ## 工作方式
@@ -24,6 +26,7 @@ Council 将简短任务交给 OpenCode sidecar：三位中立、只读的 partic
 
 | 职责 | 当前模型 |
 |---|---|
+| Codex 主任务（sidecar 之外） | 当前会话主模型，例如 Sol；保留最终判断与编码权 |
 | Coordinator | `opencode-go/gpt-5.6-luna` |
 | Participant 1 | `opencode-go/muse-spark-1.3-contributor` |
 | Participant 2 | `opencode-go/qwen3.8-flash` |
