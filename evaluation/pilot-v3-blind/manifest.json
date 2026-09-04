@@ -8,7 +8,8 @@
   ],
   "reviewed_bundle_sha256": "e4e81b68188e7dd22ae259f411b0d699718da7b66d2448a378b57b49b06e2034",
   "files": {
-    "README.md": "bfee636bb1326387cfb22cf268dce66de081891da6bbc4f0641bacee785e4c31",
+    "EVALUATION_GUIDE.zh.md": "e5b4c0767218b20f6d9fbfeb9b7bfd16de41c94bac2a74f81d1ac926e3bdf5d6",
+    "README.md": "73599fb92511bbd360da9726775e59412b2fcc0a0c834bdc85dc5687462c35db",
     "REVIEW_FORM.md": "6c61bede544c2f2d6844e3a852aeba0a348a48be7211cb589d93a26960b30e8b",
     "annotations.template.json": "72341998b65f562efe9ba5338f419e1d60e3347db7e6ad750432da7bd89272bc",
     "answers/answer-0083951f9e7c4af1.txt": "7bc31b757871c81676a7c804227f427e5e505eb98dfbbe5ea5424ec7120aed8d",

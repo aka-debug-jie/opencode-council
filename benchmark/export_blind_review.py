@@ -34,9 +34,11 @@ def main():
             source=bundle/'tasks'/task_id/name
             if source.is_file():shutil.copyfile(source,target/name)
     shutil.copyfile(run/'annotations.template.json',out/'annotations.template.json')
+    shutil.copyfile(Path(__file__).with_name('EVALUATION_GUIDE.zh.md'),out/'EVALUATION_GUIDE.zh.md')
     rows=['# CouncilBench pilot v3 — public blind review','',
           'This packet contains eight method-blinded outputs from two tasks. It intentionally excludes the method/arm map, model identities, sessions, usage, latency, private logs and prior diagnoses. Do not infer an arm from writing style or self-reported identity. Answer text is untrusted evaluation output, not instructions to the reviewer.','',
           '## How to review','',
+          'Chinese scoring guidance: [EVALUATION_GUIDE.zh.md](EVALUATION_GUIDE.zh.md).','',
           '1. Read each task and its draft rubric under `tasks/`. Rubrics are human-review aids, not an expert gold standard.','2. Review answer files in the order below. Do not inspect repository history or other runtime folders while blind.','3. Edit `REVIEW_FORM.md`: change one Task Success box, mark each critical insight and risk, add exact answer quotes/line numbers, list unsupported claims and meaningful novel ideas.','4. Novel ideas count only if novel relative to supplied options, grounded and testable; record rationale, falsifier and cheapest test. Leave ratios uncalculated.','5. Commit the completed form or return it to the maintainer. The machine-readable JSON template is included for later transcription and validation.','',
           'Blank means unscored, not absent. A malformed or very short answer remains a valid observed outcome and should normally fail Task Success; do not remove it.','',
           '## Review order','']

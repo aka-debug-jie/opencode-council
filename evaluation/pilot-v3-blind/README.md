@@ -4,6 +4,8 @@ This packet contains eight method-blinded outputs from two tasks. It intentional
 
 ## How to review
 
+Chinese scoring guidance: [EVALUATION_GUIDE.zh.md](EVALUATION_GUIDE.zh.md).
+
 1. Read each task and its draft rubric under `tasks/`. Rubrics are human-review aids, not an expert gold standard.
 2. Review answer files in the order below. Do not inspect repository history or other runtime folders while blind.
 3. Edit `REVIEW_FORM.md`: change one Task Success box, mark each critical insight and risk, add exact answer quotes/line numbers, list unsupported claims and meaningful novel ideas.
