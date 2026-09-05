@@ -1,0 +1,191 @@
+I verified every supplied file directly (`repo/payment_worker.py`, `repo/provider.py`, both test files, and all four `evidence/*` files). The on-disk contents match the quoted materials. I independently traced the incident through the code and the evidence below.
+
+## Root cause
+
+Two conditions interact; neither alone double-charges.
+
+1. **Unstable provider idempotency key.** `provider_key()` returns `message.delivery_id` under v1 but `message.payment_intent_id` under v2. The queue regenerates `delivery_id` on every redelivery, so the key is not a function of the payment intent. The provider deduplicates one charge **per key**, not per intent, so the same intent reached the provider under two keys.
+2. **Ambiguous post-accept timeout.** The v1 attempt under key `delivery-901` actually created `ch-1`, but the worker received `ProviderTimeout`, returned `False` (`ack=false`), and never called `mark_charged`. The row stayed `pending`, forcing a redelivery that (v2) charged under `pi-77`, minting `ch-2`.
+
+With a stable key the retry reuses `ch-1`; with a pre-accept `ProviderUnavailable` there is no `ch-1` to duplicate. The defect is in `provider_key` — and it predates the version crossing: a v1→v1 redelivery also changes `delivery_id`, so v1 alone was already unsafe.
+
+## Evidence
+
+- `repo/provider.py`: `charges_by_key` is keyed only by `idempotency_key` ("one charge per idempotency key, not per payment intent"); `success_then_timeout` creates the charge *then* raises; `fail_before_accept` raises *before* creating any charge.
+- `evidence/database.json`: two charges for `pi-77` — `ch-1` under `delivery-901`, `ch-2` under `pi-77`; `provider_requests` states "charge ch-1 created; caller timed out" then "charge ch-2 created". The single `payment_rows` row shows `provider_key=delivery-901` but `charge_id=ch-2` — a stale-key symptom, not the mechanism (`handle` recomputes `key` from the message and never reads `row["provider_key"]`).
+- `evidence/trace.json`: `provider-1` used key `delivery-901` ("accepted; response lost"); `provider-2` used key `pi-77` ("accepted"); checkout returned "existing intent returned" for `req-B`.
+- `evidence/incident.log`: v1 `key=delivery-901` → `provider_timeout outcome=unknown ack=false` → redelivery as `delivery-902` → v2 `key=pi-77` → `charge=ch-2`.
+- `evidence/deployment.txt`: at-least-once queue; redeliveries can cross v1/v2; provider guarantees one charge per key and "does not know that two different keys represent the same payment intent"; timeouts are ambiguous; the 30s ledger is an optimization, not the idempotency store.
+- `repo/test_public.py::test_v2_redelivery_reuses_provider_effect` proves a stable key reuses the charge after an ambiguous timeout.
+
+## Rejected hypotheses
+
+1. **Provider idempotency broken.** Rejected: the two charges have *different* keys; the provider honored one-charge-per-key.
+2. **Timeout alone caused it.** Rejected: with a stable key the retry reuses `ch-1` (public test). Necessary, not sufficient.
+3. **v1→v2 key change alone caused it.** Rejected: v1→v1 with a new `delivery_id` also changes the key, and a pre-accept failure plus key change still yields one charge. The version switch merely exposed an existing defect.
+4. **Local ledger TTL (30s) missed dedup.** Rejected: the ledger is explicitly an operational optimization, only written on success (which never happened for the timed-out attempt); both workers logged `ledger_lookup=miss`.
+5. **Store failing to mark charged / stale pending row.** Rejected: leaving the row `pending` after an ambiguous timeout is correct; the store is keyed by intent. The stale `provider_key` field is a symptom.
+6. **Checkout/`req-B` minted a second intent.** Rejected: trace shows "existing intent returned"; the same `pi-77` flows through both provider calls.
+7. **Marking `charged` on timeout would fix it.** Rejected and dangerous: a timeout can also mean no charge exists, which would break the pre-charge-failure safety property.
+
+Candidate 10's split `except` clauses are a no-op (both branches return `False`) and are not part of the minimal fix.
+
+## Minimal fix
+
+Change `provider_key` to always return `payment_intent_id`, the stable logical identity. One intent → one key → at most one provider charge; a pre-charge failure leaves no provider record, so a retry still creates exactly one charge. `protocol` is retained only for API compatibility.
+
+```python file=repo/payment_worker.py
+from dataclasses import dataclass
+
+from provider import ProviderTimeout, ProviderUnavailable
+
+
+@dataclass(frozen=True)
+class PaymentMessage:
+    order_id: str
+    payment_intent_id: str
+    request_id: str
+    delivery_id: str
+
+
+class PaymentStore:
+    def __init__(self):
+        self.rows = {}
+
+    def begin(self, message, provider_key):
+        self.rows.setdefault(message.payment_intent_id, {
+            "order_id": message.order_id,
+            "status": "pending",
+            "provider_key": provider_key,
+            "charge_id": None,
+        })
+        return self.rows[message.payment_intent_id]
+
+    def mark_charged(self, payment_intent_id, charge):
+        row = self.rows[payment_intent_id]
+        row["status"] = "charged"
+        row["charge_id"] = charge.charge_id
+
+
+class PaymentWorker:
+    def __init__(self, protocol, store, provider):
+        # protocol retained for API compatibility; the idempotency key must
+        # not depend on it.
+        self.protocol = protocol
+        self.store = store
+        self.provider = provider
+
+    def provider_key(self, message):
+        # The provider guarantees one charge per idempotency key, not per
+        # payment intent. The key must therefore be stable across every
+        # redelivery of the same intent. delivery_id changes on each queue
+        # redelivery (and the legacy v1/v2 split changed it from delivery_id
+        # to payment_intent_id), so an ambiguous-timeout retry could mint a
+        # second charge. Always key by the payment intent.
+        return message.payment_intent_id
+
+    def handle(self, message):
+        key = self.provider_key(message)
+        row = self.store.begin(message, key)
+        if row["status"] == "charged":
+            return True
+        try:
+            charge = self.provider.charge(message.payment_intent_id, key)
+        except (ProviderTimeout, ProviderUnavailable):
+            return False
+        self.store.mark_charged(message.payment_intent_id, charge)
+        return True
+```
+
+## Verification tests
+
+Runnable `unittest` covering the incident and both safety properties (including the v1-only redelivery, which the original code also fails).
+
+```python file=repo/test_candidate.py
+import unittest
+
+from payment_worker import PaymentMessage, PaymentStore, PaymentWorker
+from provider import FakeProvider
+
+
+def make_message(order="order-1", intent="pi-1", request="request-1", delivery="delivery-1"):
+    return PaymentMessage(order, intent, request, delivery)
+
+
+class DuplicateChargeRegressionTest(unittest.TestCase):
+    def test_v1_timeout_then_v2_redelivery_does_not_double_charge(self):
+        # Incident reproduction: the v1 attempt times out after the provider
+        # accepted the charge; the v2 redelivery must reuse it, not mint ch-2.
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("success_then_timeout")
+        first = PaymentMessage("order-77", "pi-77", "req-A", "delivery-901")
+        retry = PaymentMessage("order-77", "pi-77", "req-B", "delivery-902")
+        self.assertFalse(PaymentWorker("v1", store, provider).handle(first))
+        self.assertTrue(PaymentWorker("v2", store, provider).handle(retry))
+        self.assertEqual(len(provider.charges), 1)
+        self.assertEqual({c.idempotency_key for c in provider.charges}, {"pi-77"})
+        self.assertEqual(store.rows["pi-77"]["status"], "charged")
+        self.assertEqual(store.rows["pi-77"]["charge_id"], "ch-1")
+
+    def test_v1_redelivery_alone_does_not_double_charge(self):
+        # v1 alone: delivery_id changes on every redelivery, so the legacy
+        # delivery_id key was unstable even without a protocol change.
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("success_then_timeout")
+        worker = PaymentWorker("v1", store, provider)
+        self.assertFalse(worker.handle(make_message(delivery="delivery-1")))
+        self.assertTrue(worker.handle(make_message(delivery="delivery-2")))
+        self.assertEqual(len(provider.charges), 1)
+        self.assertEqual({c.idempotency_key for c in provider.charges}, {"pi-1"})
+
+    def test_retry_after_precharge_failure_still_creates_one_charge(self):
+        # Safety property 2: a definitive pre-accept failure creates no charge,
+        # and a later retry must still create exactly one.
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("fail_before_accept")
+        worker = PaymentWorker("v2", store, provider)
+        self.assertFalse(worker.handle(make_message(delivery="delivery-1")))
+        self.assertEqual(len(provider.charges), 0)
+        self.assertTrue(worker.handle(make_message(delivery="delivery-2")))
+        self.assertEqual(len(provider.charges), 1)
+        self.assertEqual(store.rows["pi-1"]["status"], "charged")
+
+    def test_provider_key_stable_across_protocol_versions(self):
+        msg = make_message()
+        w1 = PaymentWorker("v1", PaymentStore(), FakeProvider())
+        w2 = PaymentWorker("v2", PaymentStore(), FakeProvider())
+        self.assertEqual(w1.provider_key(msg), "pi-1")
+        self.assertEqual(w2.provider_key(msg), "pi-1")
+
+    def test_v2_redelivery_reuses_provider_effect(self):
+        # Existing public behavior must keep passing.
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("success_then_timeout")
+        worker = PaymentWorker("v2", store, provider)
+        self.assertFalse(worker.handle(make_message(delivery="delivery-1")))
+        self.assertTrue(worker.handle(make_message(delivery="delivery-2")))
+        self.assertEqual(len(provider.charges), 1)
+
+    def test_v1_single_successful_delivery(self):
+        store, provider = PaymentStore(), FakeProvider()
+        self.assertTrue(PaymentWorker("v1", store, provider).handle(make_message()))
+        self.assertEqual(len(provider.charges), 1)
+
+    def test_charged_row_short_circuits_without_second_provider_call(self):
+        store, provider = PaymentStore(), FakeProvider()
+        self.assertTrue(PaymentWorker("v1", store, provider).handle(make_message(delivery="delivery-1")))
+        self.assertTrue(PaymentWorker("v2", store, provider).handle(make_message(delivery="delivery-2")))
+        self.assertEqual(len(provider.charges), 1)
+        self.assertEqual(len(provider.requests), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## Residual risks
+
+- **Rolling-deployment window:** unfixed v1 workers still running (up to ~20 min) can still emit `delivery_id` keys; a timeout on a legacy worker followed by a fixed-worker retry remains exposed until v1 is drained.
+- **Already-created duplicates:** the fix does not refund or merge the existing `ch-1`/`ch-2` for `pi-77`; reconciliation is out of scope.
+- **Store durability:** `PaymentStore` is in-memory; after a restart the `charged` short-circuit is lost and correctness rests on the stable key plus the provider's 7-day per-key retention. A retry arriving after key expiry could still duplicate (low, per supplied notes).
+- **Inference limits:** I ran no code; charge-creation-before-timeout is asserted by `provider.py` and `database.json`, not observed at runtime. The fix assumes `payment_intent_id` is unique and stable per checkout, which `deployment.txt` supports.

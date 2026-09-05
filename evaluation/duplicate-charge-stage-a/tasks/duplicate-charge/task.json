@@ -1,0 +1,48 @@
+{
+  "id": "duplicate-charge",
+  "version": "0.1",
+  "kind": "technical",
+  "prompt": "Diagnose a rare duplicate-charge incident in the supplied synthetic repository. At least five hypotheses are plausible, but the primary root cause requires two conditions to interact. Do not stop at a narrative report: identify the root cause, cite evidence that rules out or limits the other hypotheses, propose the smallest safe fix, and provide a regression test. Preserve both safety properties: one payment intent must never create more than one provider charge, and a retry after a pre-charge failure must still be able to create exactly one charge. Do not redesign unrelated components. Your final answer must use exactly these ordered sections: Root cause, Evidence, Rejected hypotheses, Minimal fix, Verification tests, Residual risks. Under Minimal fix include exactly one fenced block beginning ```python file=repo/payment_worker.py containing the complete replacement file. Under Verification tests include exactly one fenced block beginning ```python file=repo/test_candidate.py containing runnable unittest code. Use only supplied files; do not browse or inspect unrelated files. Keep prose under 600 English words, excluding code.",
+  "materials": [
+    {
+      "id": "worker-source",
+      "title": "Payment worker implementation",
+      "file": "repo/payment_worker.py"
+    },
+    {
+      "id": "provider-source",
+      "title": "Deterministic payment provider fixture",
+      "file": "repo/provider.py"
+    },
+    {
+      "id": "public-tests",
+      "title": "Passing public unit tests",
+      "file": "repo/test_public.py"
+    },
+    {
+      "id": "incident-test",
+      "title": "Failing incident reproduction",
+      "file": "repo/test_incident.py"
+    },
+    {
+      "id": "incident-log",
+      "title": "Sanitized service and queue log",
+      "file": "evidence/incident.log"
+    },
+    {
+      "id": "trace",
+      "title": "Cross-service trace",
+      "file": "evidence/trace.json"
+    },
+    {
+      "id": "database-snapshot",
+      "title": "Database snapshot after the incident",
+      "file": "evidence/database.json"
+    },
+    {
+      "id": "deployment",
+      "title": "Deployment and protocol notes",
+      "file": "evidence/deployment.txt"
+    }
+  ]
+}

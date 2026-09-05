@@ -1,0 +1,9 @@
+{
+  "trace_id": "t-77",
+  "spans": [
+    {"service":"checkout-api","request_id":"req-A","payment_intent_id":"pi-77","result":"202 accepted"},
+    {"service":"payment-provider","request_id":"provider-1","payment_intent_id":"pi-77","idempotency_key":"delivery-901","result":"accepted; response lost"},
+    {"service":"checkout-api","request_id":"req-B","payment_intent_id":"pi-77","result":"existing intent returned"},
+    {"service":"payment-provider","request_id":"provider-2","payment_intent_id":"pi-77","idempotency_key":"pi-77","result":"accepted"}
+  ]
+}

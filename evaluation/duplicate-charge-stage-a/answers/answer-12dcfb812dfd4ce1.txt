@@ -1,0 +1,154 @@
+## Root cause
+
+Two conditions interacted: (1) a post-acceptance timeout created `ch-1` but hid the result; (2) rolling deployment changed the retry key from `delivery-901` to `pi-77`. The provider deduplicates keys, not payment intents, so retry created `ch-2`.
+
+## Evidence
+
+The log records timeout, then requests with different keys. The trace records both provider acceptances for `pi-77`. The snapshot shows `ch-1` and `ch-2`, while the checkout retry returned the existing intent. This rules out a second checkout as the primary cause. The fixture tests independently establish the same interaction.
+
+## Rejected hypotheses
+
+1. **Client retry:** limited: `req-B` returned the existing intent; it did not create a new intent.
+2. **Queue redelivery alone:** insufficient: redelivery with the same key would provider-deduplicate.
+3. **30-second local-ledger expiry:** not causal here; both lookups were misses, and that ledger is not provider idempotency.
+4. **Provider randomly duplicating one key:** contradicted by the provider contract and the two distinct recorded keys.
+5. **Concurrency race:** possible generally, but no concurrent execution evidence exists; per-key provider deduplication would still protect a stable key.
+6. **Database write failure:** the missing local write explains retrying, not two provider effects; the provider records directly show two keys.
+
+## Minimal fix
+
+Always choose the payment intent for new rows, while reusing an already stored key for legacy rows. This preserves an existing ambiguous legacy charge and makes fresh retries stable.
+
+```python file=repo/payment_worker.py
+from dataclasses import dataclass
+
+from provider import ProviderTimeout, ProviderUnavailable
+
+
+@dataclass(frozen=True)
+class PaymentMessage:
+    order_id: str
+    payment_intent_id: str
+    request_id: str
+    delivery_id: str
+
+
+class PaymentStore:
+    def __init__(self):
+        self.rows = {}
+
+    def begin(self, message, provider_key):
+        self.rows.setdefault(message.payment_intent_id, {
+            "order_id": message.order_id,
+            "status": "pending",
+            "provider_key": provider_key,
+            "charge_id": None,
+        })
+        return self.rows[message.payment_intent_id]
+
+    def mark_charged(self, payment_intent_id, charge):
+        row = self.rows[payment_intent_id]
+        row["status"] = "charged"
+        row["charge_id"] = charge.charge_id
+
+
+class PaymentWorker:
+    def __init__(self, protocol, store, provider):
+        self.protocol = protocol
+        self.store = store
+        self.provider = provider
+
+    def provider_key(self, message):
+        return message.payment_intent_id
+
+    def handle(self, message):
+        candidate_key = self.provider_key(message)
+        row = self.store.begin(message, candidate_key)
+        if row["status"] == "charged":
+            return True
+
+        try:
+            charge = self.provider.charge(
+                message.payment_intent_id,
+                row["provider_key"],
+            )
+        except (ProviderTimeout, ProviderUnavailable):
+            return False
+
+        self.store.mark_charged(message.payment_intent_id, charge)
+        return True
+```
+
+## Verification tests
+
+```python file=repo/test_candidate.py
+import unittest
+
+from payment_worker import PaymentMessage, PaymentStore, PaymentWorker
+from provider import Charge, FakeProvider
+
+
+class CandidateTest(unittest.TestCase):
+    def message(self, delivery, intent="pi-1"):
+        return PaymentMessage("order-1", intent, "request", delivery)
+
+    def test_mixed_version_timeout_has_one_charge(self):
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("success_then_timeout")
+
+        self.assertFalse(
+            PaymentWorker("v1", store, provider).handle(
+                self.message("delivery-1")
+            )
+        )
+        self.assertTrue(
+            PaymentWorker("v2", store, provider).handle(
+                self.message("delivery-2")
+            )
+        )
+        self.assertEqual(len(provider.charges), 1)
+        self.assertEqual(provider.charges[0].idempotency_key, "pi-1")
+
+    def test_precharge_failure_can_retry_once(self):
+        store, provider = PaymentStore(), FakeProvider()
+        provider.queue_behavior("fail_before_accept")
+
+        self.assertFalse(
+            PaymentWorker("v2", store, provider).handle(
+                self.message("delivery-1", "pi-2")
+            )
+        )
+        self.assertTrue(
+            PaymentWorker("v2", store, provider).handle(
+                self.message("delivery-2", "pi-2")
+            )
+        )
+        self.assertEqual(len(provider.charges), 1)
+
+    def test_legacy_pending_row_reuses_stored_key(self):
+        store, provider = PaymentStore(), FakeProvider()
+        provider.charges_by_key["delivery-old"] = Charge(
+            "ch-old", "pi-3", "delivery-old"
+        )
+        store.rows["pi-3"] = {
+            "order_id": "order-1",
+            "status": "pending",
+            "provider_key": "delivery-old",
+            "charge_id": None,
+        }
+
+        self.assertTrue(
+            PaymentWorker("v2", store, provider).handle(
+                self.message("delivery-new", "pi-3")
+            )
+        )
+        self.assertEqual(len(provider.charges), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## Residual risks
+
+Already-running unpatched v1 workers can still emit delivery keys. Shared durable store atomicity is not demonstrated by the in-memory fixture. Provider-key retention is finite, and the two existing charges require separate remediation.

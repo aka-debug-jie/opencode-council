@@ -1,0 +1,9 @@
+The queue is at-least-once. A delivery is retried when a worker exits, returns retry, or its acknowledgement is lost.
+
+The checkout API may receive client retries with a new request_id, but it returns the existing payment_intent_id for the same checkout operation.
+
+During a rolling deployment, protocol-v1 and protocol-v2 payment workers consume the same queue. A redelivery can therefore move between versions. Protocol-v1 workers are expected to remain for up to 20 minutes.
+
+The local delivery ledger retains completed rows for 30 seconds. It is an operational optimization, not the payment provider's idempotency store. The payment provider retains each caller-supplied idempotency key for seven days and guarantees one charge per key. It does not know that two different keys represent the same payment intent.
+
+Provider timeouts are ambiguous: the charge may have been created even when the worker receives no response. A definitive ProviderUnavailable error in this fixture occurs before the provider accepts or creates a charge.
