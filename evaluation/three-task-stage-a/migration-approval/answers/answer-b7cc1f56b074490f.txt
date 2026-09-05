@@ -1,0 +1,51 @@
+## Decision
+
+**Reject.** The plan violates required invariants and lacks deterministic fault-injection evidence.
+
+## Blockers
+
+1. **Violated invariant:** INV-2 convergence.  
+   **Concrete execution sequence:** v1 commits; v2 times out; process terminates before retry durability.  
+   **Worst consequence:** An acknowledged mutation is absent from v2 and/or billing.  
+   **Smallest sufficient fix:** Use a durable, idempotent mutation/outbox record before acknowledgment, driving v2 and billing reconciliation.  
+   **Falsification/verification test:** Kill the process between commits and verify exactly-once convergence.
+
+2. **Violated invariant:** INV-3 monotonicity.  
+   **Concrete execution sequence:** Backfill reads version 10; dual-write commits version 11; unconditional upsert runs afterward.  
+   **Worst consequence:** Version 10 overwrites newer version 11.  
+   **Smallest sufficient fix:** Make backfill conditional on logical version, never replacing a newer row.  
+   **Falsification/verification test:** Force this race and verify version 11 remains.
+
+3. **Violated invariant:** INV-1 and INV-3.  
+   **Concrete execution sequence:** After v2 cutover, an epoch-null v1 worker processes an old cancellation after a schema-epoch-2 reservation.  
+   **Worst consequence:** Legacy processing applies stale state across migration generations.  
+   **Smallest sufficient fix:** Fence, park, or safely route legacy messages using tenant and migration-generation/version checks.  
+   **Falsification/verification test:** Replay the epoch-null message after the epoch-2 message and verify it cannot apply stale state.
+
+4. **Violated invariant:** INV-5.  
+   **Concrete execution sequence:** Flush `amber:88`; a v2 read repopulates it; delayed v1 invalidation arrives or v1 data remains usable.  
+   **Worst consequence:** A successful read returns an older-generation value.  
+   **Smallest sufficient fix:** Namespace cache keys by migration generation and enforce generation-aware atomic read/write invalidation.  
+   **Falsification/verification test:** Delay invalidation and force repopulation; verify no stale read succeeds.
+
+5. **Violated invariant:** INV-4 rollback.  
+   **Concrete execution sequence:** Create v2-only object 991 with `alloc-7`; rollback switches reads to v1; later repair is required.  
+   **Worst consequence:** Acknowledged v2-only state is lost or unavailable during the 72-hour rollback window.  
+   **Smallest sufficient fix:** Roll back to a v2-compatible authoritative path, or add lossless v1 representation before launch.  
+   **Falsification/verification test:** Roll back at one and 71 hours and verify lossless availability within 60 seconds.
+
+## Evidence
+
+The architecture, proposal, constraints, and records directly supply each failure sequence above. The conclusions are inferences from those records and stated invariants.
+
+## Non-blocking concerns
+
+Hourly row counts do not satisfy canary evidence requirements. Billing deduplication, queue behavior, outbox lag, and Redis flush scope are unspecified; they require confirmation, not assumptions.
+
+## Approval tests
+
+Run deterministic fault-injection tests for all five blockers, plus duplicate v1/v2 billing-event replay, tenant-isolation checks, and the 60-second tenant-pause limit.
+
+## Residual unknowns
+
+Whether billing deduplicates correctly, whether v2-only creation can be suspended, and what queue ordering/visibility guarantees exist remain unknown.

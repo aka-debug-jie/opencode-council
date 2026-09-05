@@ -1,0 +1,3 @@
+The patch adds generation comparisons to cache refresh and invalidation. All public tests pass. The cache is process-local in eight regions; invalidation events are delivered at least once and can arrive out of order.
+
+Tenant IDs and user IDs are separate identifiers. User IDs are unique only within a tenant. Revocation must take effect after a region processes the corresponding generation event; a late refresh that began earlier must not restore permissions. The review is limited to finding counterexamples and must not replace the implementation.

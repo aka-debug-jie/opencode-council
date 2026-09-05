@@ -1,0 +1,5 @@
+API servers route every authenticated request by tenant_id. PostgreSQL v1 uses per-customer schemas; v2 uses shared tables keyed by (tenant_id, object_id). Background workers consume a shared at-least-once queue. Protocol-v1 workers ignore schema_epoch and may remain alive for 30 minutes after a deployment begins.
+
+The billing consumer receives change events from both v1 and v2 during migration. There is no transaction spanning the two databases or the queue. Redis keys are currently tenant_id:object_id and do not include source schema or migration generation. Cache invalidation is asynchronous.
+
+V2 introduces a discount allocation and an audit field that cannot be represented losslessly in v1. New objects may be created only in v2 after tenant cutover.

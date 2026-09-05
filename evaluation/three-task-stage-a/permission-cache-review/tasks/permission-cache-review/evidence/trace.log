@@ -1,0 +1,6 @@
+12:00:00.000 region=eu tenant=amber user=42 refresh_start snapshot_generation=7 permissions=read,admin
+12:00:00.010 region=us tenant=blue user=42 cache_fill generation=3 permissions=read
+12:00:00.020 region=eu tenant=amber user=42 store_update generation=8 permissions=read
+12:00:00.025 region=eu tenant=amber user=42 invalidation generation=8 processed=true entry=deleted
+12:00:00.040 region=eu tenant=amber user=42 refresh_resume snapshot_generation=7 result=written
+12:00:00.050 region=eu tenant=amber user=42 authorization permission=admin result=allowed

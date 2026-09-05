@@ -1,0 +1,67 @@
+## Verdict
+
+The patch has two high-value correctness defects: tenant-blind cache identity and stale refresh resurrection after deletion.
+
+## Suspects
+
+1. **Tenant-blind keying:** `_key()` uses only `user_id`, although store rows are tenant-scoped and IDs are tenant-local.
+2. **Deletion loses freshness state:** An older refresh can write after invalidation deletes the entry.
+
+## Evidence
+
+`auth_store.py` keys rows by `(tenant_id, user_id)`, while `auth_cache.py` keys entries by `user_id`. The deployment description explicitly states that user IDs are unique only within a tenant.
+
+For the race, `refresh_from_snapshot()` rejects older snapshots only when a current entry exists. `invalidate()` deletes that entry, so a previously captured older snapshot can subsequently be written. The supplied trace independently shows generation 7 being written after generation 8 invalidation.
+
+## Counterexample tests
+
+```python file=repo/test_candidate.py
+import unittest
+
+from auth_cache import PermissionCache
+from auth_store import PermissionStore
+
+
+class CandidatePermissionCacheTest(unittest.TestCase):
+    def test_same_user_id_isolated_between_tenants(self):
+        store = PermissionStore()
+        store.set_permissions("tenant-a", "user-42", {"read"})
+        store.set_permissions("tenant-b", "user-42", {"admin"})
+        cache = PermissionCache(store)
+
+        self.assertEqual(
+            cache.get_or_refresh("tenant-a", "user-42"),
+            {"read"},
+        )
+        self.assertEqual(
+            cache.get_or_refresh("tenant-b", "user-42"),
+            {"admin"},
+        )
+
+    def test_late_old_refresh_cannot_resurrect_revoked_permissions(self):
+        store = PermissionStore()
+        old = store.set_permissions("tenant-a", "user-a", {"read", "admin"})
+        cache = PermissionCache(store)
+        cache.refresh_from_snapshot("tenant-a", "user-a", old)
+
+        revoked = store.set_permissions("tenant-a", "user-a", {"read"})
+        cache.invalidate("tenant-a", "user-a", revoked.generation)
+        cache.refresh_from_snapshot("tenant-a", "user-a", old)
+
+        self.assertEqual(
+            cache.get_or_refresh("tenant-a", "user-a"),
+            {"read"},
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## Expected failures
+
+The first test receives `{"read"}` for tenant B. The second receives `{"read", "admin"}` after the late refresh.
+
+## Residual uncertainty
+
+The corrected oracle’s internal tombstone representation is unknown, but both tests assert only externally required effective permissions and should pass any implementation preserving tenant isolation and revocation ordering.

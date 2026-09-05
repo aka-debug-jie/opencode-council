@@ -1,0 +1,33 @@
+## Decision
+
+**Reject.** The candidates agree unanimously and correctly. The plan commits non-atomic dual writes (INV-2), unconditional backfill upserts (INV-3), generation-less cache keys with async invalidation (INV-5), deferred-lossy rollback (INV-4), and un-fenced legacy v1 workers (INV-1/INV-3). The canary gate — hourly aggregate row counts — is explicitly insufficient per the constraints. Five invariant-violating schedules are directly evidenced by the supplied records.
+
+## Blockers
+
+**B1 (INV-3, Monotonicity).** Backfill reads `amber:88` at v10 "pending" (repeatable-read snapshot); a concurrent dual write commits v11 "cancelled"; the unconditional upsert lands *after* the dual write (race_snapshot). Worst: v2 regresses to v10, silently losing an acknowledged cancel — undetectable by row count. Fix: version-conditional upsert (write only if incoming version > stored). Test: pause backfill after snapshot, inject v11, resume — assert v2 retains v11.
+
+**B2 (INV-2, Convergence).** Dual write commits v1, v2 commit times out, the handler terminates before the retry log is durable (partial_write); the mutation never reaches v2. Worst: after cutover the acknowledged write is absent from the selected source of truth and its billing projection. Fix: durable idempotent outbox (record mutation key before v1 commit) with version-guarded v2 replay, or acknowledge only after v2 is durable. Test: fault-inject v2 timeout then kill; assert v2 converges to v1 exactly once.
+
+**B3 (INV-5, Read safety).** Key `amber:88` holds a v1 value; step 5 flushes it; async v1 invalidation arrives *after* the first v2 read repopulates the same key (cache; keys lack source/generation). Worst: a successful post-cutover read returns v1-generation data. Fix: namespace keys/values by migration generation (or epoch-tag and reject older-generation fills). Test: delayed invalidation past cutover — assert zero v1-sourced post-cutover reads.
+
+**B4 (INV-4, Rollback).** Object 991 is v2-only (discount alloc-7, no v1 form); step 7 flips readers to v1 and defers copy-back to a "later repair job" (rollback_example). Worst: acknowledged writes are unreadable within the 72h window, and alloc-7/audit are unrepresentable in v1 — unbounded correctness deferred to an unspecified job. Fix: synchronous lossless v2→v1 projection (or block v2-only writes until rollback is lossless) as a rollback precondition. Test: create v2-only object, roll back, assert immediate v1 readability/billing within ≤60s.
+
+**B5 (INV-1/INV-3, Legacy workers).** After cutover, api-v2 applies "reserve" (epoch 2) to `amber:88`; a still-alive v1 worker (ignores `schema_epoch`, 30-min window) dequeues m-old-1 "cancel" (epoch null) and applies it over the newer state (queued_messages). Worst: a stale generation event overwrites newer v2 truth, duplicated by at-least-once re-delivery. Fix: drain/fence the tenant's v1 consumers at cutover and reject/drop events whose `schema_epoch` predates the cutover epoch. Test: inject a post-cutover v1 "cancel" — assert it is dropped and v2 retains "reserve" (epoch 2).
+
+## Evidence
+
+`race_snapshot`→B1; `partial_write`→B2; `cache` + architecture ("keys…do not include source schema or migration generation; invalidation is asynchronous")→B3; `rollback_example` + INV-4's "without waiting for an unspecified later repair"→B4; `queued_messages` + architecture ("Protocol-v1 workers ignore schema_epoch…30 minutes")→B5. Constraints INV-1–5 map one-to-one; the canary requirement ("deterministic fault-injection evidence, not row-count equality alone") contradicts proposal step 3. No supplied material contradicts these five.
+
+The candidates' disagreements are immaterial: B1–B4/B5 appear consistently (some split INV-1 vs INV-3 for B5; Candidate 10 alone deferred INV-4 to "residual unknown," but the rollback_example + step 7 combination is a direct schedule, making it a confirmed blocker, not an unknown).
+
+## Non-blocking concerns
+
+Hourly aggregate row counts are insufficient canary evidence (superseded by the deterministic fault-injection tests, not a separate design flaw). Three in-request retries add tail latency and are non-durable — durability defect already captured by B2/B5. The 24h/72h/60s windows are unproven but, if enforced, consistent with constraints. The pre-cutover Redis flush (step 5) is correct in intent but incomplete without generation-tagged keys (B3).
+
+## Approval tests
+
+Fault-injection harness asserting per-tenant INV-1–5 as the canary gate, replacing row-count equality: (1) backfill-after-dual-write retains v11; (2) v2-timeout-then-kill converges exactly once; (3) delayed invalidation yields no v1-sourced read; (4) v2-only object survives rollback within 60s; (5) stale v1 event is fenced post-cutover. Plus a billing-projection diff for ≥24h and a 30-min legacy-worker soak.
+
+## Residual unknowns
+
+Whether the billing consumer deduplicates v1+v2 change events for one mutation (silent — if not, a possible sixth INV-2 billing blocker); whether backfill defaults for discount/audit fields are lossless; whether the Redis flush is tenant-scoped versus global (`FLUSHDB` would violate INV-1); Redis invalidation ordering guarantees; and whether any v1 worker epoch-gating or per-tenant quiesce mechanism exists downstream.

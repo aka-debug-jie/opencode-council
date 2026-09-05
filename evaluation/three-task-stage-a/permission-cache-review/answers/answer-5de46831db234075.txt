@@ -1,0 +1,74 @@
+I verified all supplied files directly. The patch's two root causes are confirmed; I resolved the candidates' disagreements by testing each proposed counterexample mentally against both plausible oracle fixes (a per-key invalidation watermark, or a store-generation recheck in `refresh_from_snapshot`).
+
+## Verdict
+
+Reject. The patch still leaks permissions across tenants and still restores revoked permissions after invalidation. Two root causes, three observable interleavings.
+
+## Suspects
+
+1. **Tenant-blind cache key (`auth_cache.py:8-9`).** `_key` returns only `user_id`, while the store keys on `(tenant_id, user_id)` and user IDs are unique only within a tenant. Interleaving: `get_or_refresh("amber","42")` fills key `"42"` with amber's snapshot; a later `get_or_refresh("blue","42")` hits that entry and returns amber's permissions without ever reading the store.
+
+2. **No invalidation watermark — warm cache (`auth_cache.py:20-26,28-32`).** `invalidate` only `del`s the entry; `refresh_from_snapshot` guards against a *present newer* entry (`current.generation > snapshot.generation`) but sees `None` after deletion, so it rewrites the stale snapshot. Interleaving (exactly `trace.log`): refresh captures gen7 `{read,admin}` → store advances to gen8 `{read}` → `invalidate(8)` deletes the entry → the late `refresh_from_snapshot(gen7)` finds no entry and writes gen7 back → `admin` served again.
+
+3. **No invalidation watermark — cold cache.** Same root cause, distinct code path and interleaving: when the region processes a revocation before ever caching the key, `invalidate`'s `current is None` branch no-ops and records nothing. A refresh that began earlier (captured gen1) then fills the cache unconditionally.
+
+## Evidence
+
+- `auth_cache.py:9` `_key` drops `tenant_id`; `auth_store.py:15,22` key on `(tenant_id, user_id)`.
+- `auth_cache.py:23-25` writes whenever `current is None or current.generation <= snapshot.generation`; `31-32` no-op when entry absent.
+- `pr.txt:3` "User IDs are unique only within a tenant"; "a late refresh that began earlier must not restore permissions."
+- `trace.log:1,4-6` show the warm-cache resurrection sequence ending in `authorization permission=admin result=allowed`.
+
+## Counterexample tests
+
+```python file=repo/test_candidate.py
+import unittest
+
+from auth_cache import PermissionCache
+from auth_store import PermissionStore
+
+
+class PatchCounterexamples(unittest.TestCase):
+    def test_cache_key_isolates_tenants(self):
+        store = PermissionStore()
+        store.set_permissions("amber", "42", {"read"})
+        store.set_permissions("blue", "42", {"admin"})
+        cache = PermissionCache(store)
+        self.assertEqual(cache.get_or_refresh("amber", "42"), {"read"})
+        # blue/42 collides on key "42" and returns amber's permissions
+        self.assertEqual(cache.get_or_refresh("blue", "42"), {"admin"})
+
+    def test_late_refresh_must_not_restore_revoked_permission(self):
+        store = PermissionStore()
+        before = store.set_permissions("amber", "42", {"read", "admin"})  # gen 1
+        cache = PermissionCache(store)
+        self.assertEqual(cache.get_or_refresh("amber", "42"), before.permissions)
+        revoked = store.set_permissions("amber", "42", {"read"})          # gen 2
+        cache.invalidate("amber", "42", revoked.generation)               # deletes gen-1 entry
+        # refresh that began earlier resumes now with the gen-1 snapshot
+        cache.refresh_from_snapshot("amber", "42", before)
+        self.assertEqual(cache.get_or_refresh("amber", "42"), {"read"})
+
+    def test_invalidation_before_first_fill_blocks_stale_refresh(self):
+        store = PermissionStore()
+        before = store.set_permissions("amber", "42", {"read", "admin"})  # gen 1
+        revoked = store.set_permissions("amber", "42", {"read"})          # gen 2
+        cache = PermissionCache(store)                                    # nothing cached
+        cache.invalidate("amber", "42", revoked.generation)               # no-op on the patch
+        cache.refresh_from_snapshot("amber", "42", before)                # late stale fill
+        self.assertEqual(cache.get_or_refresh("amber", "42"), {"read"})
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## Expected failures
+
+- `test_cache_key_isolates_tenants`: patch returns `{"read"}` for `blue/42` (shared key), failing the second `assertEqual`. Oracle keys by `(tenant, user)` and returns `{"admin"}`.
+- `test_late_refresh_must_not_restore_revoked_permission`: patch re-inserts gen1 `{"read","admin"}` after deletion, so the final `assertEqual` gets `{"read","admin"}` instead of `{"read"}`. Oracle rejects the stale gen-1 snapshot and re-reads gen2 `{"read"}`.
+- `test_invalidation_before_first_fill_blocks_stale_refresh`: patch no-ops on `invalidate` and fills gen1; final assertion gets `{"read","admin"}`. Oracle records the processed generation (or rechecks the store), rejects gen1, and serves `{"read"}`.
+
+## Residual uncertainty
+
+The oracle's internal mechanism (per-key watermark vs. store-generation recheck) is hidden; both plausible correct designs pass all three tests, since each must honor the pr.txt invariants (tenant-scoped keys; no restoration by a late refresh). Suspects 2 and 3 are two interleavings of one root cause; if the oracle only guards the warm-cache delete path, test 3 would also fail there and not count, but tests 1 and 2 remain decisive. Tests are deterministic, single-threaded, and use only the supplied modules.

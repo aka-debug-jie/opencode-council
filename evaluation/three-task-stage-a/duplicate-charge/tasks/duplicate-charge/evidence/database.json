@@ -1,0 +1,16 @@
+{
+  "payment_rows": [
+    {"payment_intent_id":"pi-77","order_id":"order-77","status":"charged","provider_key":"delivery-901","charge_id":"ch-2"}
+  ],
+  "local_dedup_ledger": [
+    {"delivery_id":"delivery-902","status":"complete","created_at":"2026-08-14T10:00:04.090Z"}
+  ],
+  "provider_requests": [
+    {"payment_intent_id":"pi-77","idempotency_key":"delivery-901","outcome":"charge ch-1 created; caller timed out"},
+    {"payment_intent_id":"pi-77","idempotency_key":"pi-77","outcome":"charge ch-2 created"}
+  ],
+  "provider_charges": [
+    {"charge_id":"ch-1","payment_intent_id":"pi-77","idempotency_key":"delivery-901"},
+    {"charge_id":"ch-2","payment_intent_id":"pi-77","idempotency_key":"pi-77"}
+  ]
+}

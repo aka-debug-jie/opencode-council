@@ -1,0 +1,29 @@
+{
+  "version": "0.1",
+  "packet": "method-blinded-review",
+  "stage": "a",
+  "answer_count": 4,
+  "task_ids": [
+    "duplicate-charge"
+  ],
+  "reviewed_bundle_sha256": "c30a676bc80ad764aea03374c8569083c2c9ea210d1332ab50730eb53fd2e83b",
+  "selected_tasks_complete": true,
+  "files": {
+    "README.md": "c790f3c67b28fd7db73b08b4fe4785e4729934fa5b1433458f4ac48282bdcf0b",
+    "REVIEWER_INVITE.zh.md": "b8ab98ad6f6726ec67a933e3ac5c9130db7f8cbec448746d18fcf348af91abf9",
+    "REVIEW_FORM.md": "3a1e24b1453596a586766a2a63aa0683c1e1bc9b3a54a88820a284e00ed67b4d",
+    "answers/answer-12dcfb812dfd4ce1.txt": "1e8fe0dbcfc36a176d709020926725a66ebc382032101a7cb16e9697cb22a4d3",
+    "answers/answer-1dae9f05ffd64992.txt": "58562b806df6967f89d7de11fb0e1c6d53810e5670fc643b812099550c154761",
+    "answers/answer-6266140aa1a242a4.txt": "3cb0c28133a4d9b898e59dd82fad9b925ffe653d22fb91d2fea01a144004a654",
+    "answers/answer-c218dac57f8d4731.txt": "4b9321ebd7418b7429334906b12e04564f7b50ee59817d7c8b264ae47c986eef",
+    "tasks/duplicate-charge/evidence/database.json": "e4ff01926f10d25e1bad21bd450f8c5d8cf225d00709146edb52b7b9632eabb9",
+    "tasks/duplicate-charge/evidence/deployment.txt": "d9fd1166ad1b306111d79e29e0ee032e2c0ed6d7f332f8157c58eb80ca01fa7a",
+    "tasks/duplicate-charge/evidence/incident.log": "1799722064fa3fe974f9c4d5f910af5391a438dcc8ee0ef4129ab17bf2e53c99",
+    "tasks/duplicate-charge/evidence/trace.json": "54d8788c3ebce61a5764cd2ca550095ee669e235e59211295ee0b0bd342b8df2",
+    "tasks/duplicate-charge/repo/payment_worker.py": "e89eb00625e95195cc936a33cb76af15cd92871fd3698f0eaf46b72a3d2da9eb",
+    "tasks/duplicate-charge/repo/provider.py": "ee2f3bef508a0ff2d1734cf1854ee5468269bc149186e7a6e1c2cfba39d7a050",
+    "tasks/duplicate-charge/repo/test_incident.py": "638970a7592c0df4d802774e6cd8ff33b6a30ea02f6642daff5dfd20b7a0c5f8",
+    "tasks/duplicate-charge/repo/test_public.py": "9b486a87df45ffea8f6d5e9221235fbbfc167643e6aebcb755ede364fedd5fd3",
+    "tasks/duplicate-charge/task.json": "505e9bde7ea2dabf05a4c573fea994b901fde944454ba495a309a7d20ca791b4"
+  }
+}

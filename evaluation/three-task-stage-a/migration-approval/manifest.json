@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "packet": "method-blinded-review",
+  "stage": "a",
+  "answer_count": 4,
+  "task_ids": [
+    "migration-approval"
+  ],
+  "reviewed_bundle_sha256": "a64ba1db082430e9d1a8e6f2887feef228065fcf6502bc2c915f9d1ab5131cb2",
+  "selected_tasks_complete": true,
+  "files": {
+    "README.md": "807e09ebf6a47bee799c46c49317780b1f01ea55ea0abc72d66c38e5b010ad57",
+    "REVIEWER_INVITE.zh.md": "b8ab98ad6f6726ec67a933e3ac5c9130db7f8cbec448746d18fcf348af91abf9",
+    "REVIEW_FORM.md": "fd56a23087b600ffc8483a5b5ac60967c1fe6d3cda352910475108acee1147f0",
+    "answers/answer-055e35d4e2a84eb7.txt": "4a84c74be3d0292ee62356a057cc24b83e143a406d245e84ead65a411f6438d3",
+    "answers/answer-8ac9581a7e4a4741.txt": "b22db36500d27ae7dc4758b09e5573e971579e63377dc8a679f9b5e143bfee1f",
+    "answers/answer-b7cc1f56b074490f.txt": "c8d77783a995b8d7d4b6b7cc689f913cdad2f46cd4456399ed32569f1b367644",
+    "answers/answer-e35e74f813de4a6d.txt": "f52e6b0896bdc8207292149905cae1f61ac6cb4d4129fd1341ef97742a58518e",
+    "tasks/migration-approval/evidence/architecture.txt": "051413ecb6e855fb1bad18056d5aca1b63f153da3428a73bcc6c2d6eb2e1233c",
+    "tasks/migration-approval/evidence/constraints.txt": "3df5119f7812188e197ec9b573ca9b01c10120f54b429110b664a68eee5d4cd7",
+    "tasks/migration-approval/evidence/proposal.txt": "d8e680e1bfd8a3d8826f98ea1780022d2b9bd4c6e09175bcdc249191fc281be0",
+    "tasks/migration-approval/evidence/records.json": "e8dae8111c155b19482d93057a6405422175d87024cff2987270e71a2be20780",
+    "tasks/migration-approval/task.json": "bc0679a12d1c09ba94d0067fc2f75966e3c29d00527562510b500dd2a00cc7a3"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "version": "0.1",
+  "packet": "method-blinded-review",
+  "stage": "a",
+  "answer_count": 4,
+  "task_ids": [
+    "permission-cache-review"
+  ],
+  "reviewed_bundle_sha256": "83f587ddaca15fa7069deaceeeeed1c697fd03e1883727923646bbe40cf67965",
+  "selected_tasks_complete": true,
+  "files": {
+    "README.md": "8c749e6e843da2f5f1579b3f77f5160313015be081a0774306f18ca849627434",
+    "REVIEWER_INVITE.zh.md": "b8ab98ad6f6726ec67a933e3ac5c9130db7f8cbec448746d18fcf348af91abf9",
+    "REVIEW_FORM.md": "5c79bf1c26029926861338a444b9aabb40ce7a84814a92b572858cff8be45eba",
+    "answers/answer-5de46831db234075.txt": "902fbccae888b3965271898bcd2c65f054ce169a65f19cc2e62954dda3909ccb",
+    "answers/answer-9d384c3f380c4fdc.txt": "3af71205473c3e447298e38d122958e3cb14b10bcd8e14dd72dd6488ea4c5c18",
+    "answers/answer-aaf86ca359a64aa5.txt": "26464b37221fb3bef9e22d809ef3c79ec3ac679b12de4d7a929b45bc1c4446a2",
+    "answers/answer-fd951b0a3b4f4d65.txt": "545749c64f6c8cedb228c5efe10fa1c3ae5962ec1704b6e1114ff2ac28e72bca",
+    "tasks/permission-cache-review/evidence/pr.txt": "530d538c129964aeae0ab20e63bd1d5e9776f1e485f06b8c7bdd1b9249e2d3de",
+    "tasks/permission-cache-review/evidence/trace.log": "5fa1da8cf378666f55a34b4914089a95cd33138951ba681053ee34fca86f5ad5",
+    "tasks/permission-cache-review/repo/auth_cache.py": "4d4e027dc5a6cafc5127584413aeea3ad80f745b95ceef26e96a310115b9b4de",
+    "tasks/permission-cache-review/repo/auth_store.py": "b9e4c1de37a80aa0c4e771846e1803d20bb83df59651819f1cca96377a5876fd",
+    "tasks/permission-cache-review/repo/test_public.py": "88bbc2b059026bf94daf18570787c62b0011e276f0c4f4bc4204c85c91ace005",
+    "tasks/permission-cache-review/task.json": "0edfe31da83f8dff89de66d29e9d331ebc4522880bea0ddc35141c80bd14014d"
+  }
+}

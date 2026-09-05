@@ -1,0 +1,28 @@
+{
+  "id": "migration-approval",
+  "version": "0.1",
+  "kind": "technical",
+  "prompt": "Act as the final production approval reviewer for the supplied zero-downtime tenant migration plan. Do not redesign the whole platform. Decide Approve or Reject, then list at most five launch blockers. Every blocker must contain exactly five elements: violated invariant, concrete execution sequence, worst consequence, smallest sufficient fix, and a falsification/verification test. Separate true blockers from non-blocking improvements and do not invent facts. The service must remain online, support tenant-by-tenant canarying, and remain safely rollbackable for 72 hours while legacy workers can continue for 30 minutes. Use only supplied materials. Final answer at most 600 English words with exactly these ordered sections: Decision, Blockers, Evidence, Non-blocking concerns, Approval tests, Residual unknowns.",
+  "materials": [
+    {
+      "id": "architecture",
+      "title": "Current service architecture",
+      "file": "evidence/architecture.txt"
+    },
+    {
+      "id": "proposal",
+      "title": "Proposed migration plan",
+      "file": "evidence/proposal.txt"
+    },
+    {
+      "id": "constraints",
+      "title": "Rollout invariants and operational constraints",
+      "file": "evidence/constraints.txt"
+    },
+    {
+      "id": "events",
+      "title": "Representative message and cache records",
+      "file": "evidence/records.json"
+    }
+  ]
+}

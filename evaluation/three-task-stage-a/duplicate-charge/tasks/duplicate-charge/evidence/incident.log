@@ -1,0 +1,8 @@
+2026-08-14T10:00:00.000Z api request=req-A order=order-77 payment_intent=pi-77 enqueue delivery=delivery-901
+2026-08-14T10:00:00.010Z worker=w-old-3 protocol=v1 delivery=delivery-901 ledger_lookup=miss ledger_ttl_seconds=30
+2026-08-14T10:00:00.014Z worker=w-old-3 provider_request key=delivery-901 payment_intent=pi-77
+2026-08-14T10:00:00.300Z worker=w-old-3 provider_timeout outcome=unknown ack=false
+2026-08-14T10:00:04.002Z queue redelivery previous=delivery-901 delivery=delivery-902
+2026-08-14T10:00:04.010Z worker=w-new-8 protocol=v2 delivery=delivery-902 ledger_lookup=miss
+2026-08-14T10:00:04.013Z worker=w-new-8 provider_request key=pi-77 payment_intent=pi-77
+2026-08-14T10:00:04.090Z worker=w-new-8 charge=ch-2 ledger_insert=complete ack=true
