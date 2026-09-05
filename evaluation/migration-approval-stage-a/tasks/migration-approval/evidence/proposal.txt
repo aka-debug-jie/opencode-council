@@ -1,0 +1,11 @@
+The proposed plan is:
+
+1. Start application-level dual writes: commit v1, then commit v2. If v2 fails, log an error and retry from the request handler for up to three attempts.
+2. Backfill each tenant from a repeatable-read v1 snapshot into v2 with unconditional upserts.
+3. Enable shadow reads and compare aggregate row counts once per hour.
+4. Switch one tenant's API readers and new workers to v2 when counts match; old workers may finish normally.
+5. Keep existing Redis keys. Flush the tenant's current keys immediately before reader cutover.
+6. After 24 hours, stop v1 dual writes for that tenant. Retain v1 tables for 72 hours.
+7. Rollback consists of switching the reader flag to v1 and resuming dual writes. V2-only objects will be copied back by a later repair job.
+
+The proposal states that these steps are ready for production approval.

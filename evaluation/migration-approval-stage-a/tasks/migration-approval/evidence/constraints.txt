@@ -1,0 +1,7 @@
+INV-1 Tenant isolation: no request, queued event, cache entry, or repair may affect another tenant or a different migration generation.
+INV-2 Convergence: every acknowledged mutation must appear exactly once in the selected source of truth and its billing projection.
+INV-3 Monotonicity: backfill or legacy processing must never overwrite a newer logical version.
+INV-4 Rollback: for 72 hours after cutover, rollback must preserve every acknowledged write without waiting for an unspecified later repair.
+INV-5 Read safety: after a tenant changes source of truth, no successful read may return a cache value from an older migration generation.
+
+Global downtime is forbidden. A single tenant may be paused for at most 60 seconds. Canary approval requires deterministic fault-injection evidence, not row-count equality alone.

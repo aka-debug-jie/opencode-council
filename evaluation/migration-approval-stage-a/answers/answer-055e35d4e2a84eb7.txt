@@ -1,0 +1,59 @@
+# Decision
+**Reject.**
+
+# Blockers
+
+**B1 — Monotonicity (INV-3)**
+- Invariant: backfill must never overwrite a newer version.
+- Sequence: dual write commits object 88 (v11) while backfill snapshots v10; proposal's "unconditional upsert" runs after dual write, so v10 overwrites v11.
+- Consequence: a cancelled/reserved object reverts to pending → lost acknowledged mutation, wrong billing.
+- Fix: conditional upsert keyed on version (skip if incoming version ≤ existing), or version-comparison upsert.
+- Test: fault-inject the `race_snapshot` interleaving; assert final status == cancelled and v2 version == 11.
+
+**B2 — Convergence/at-least-once (INV-2)**
+- Invariant: every acknowledged mutation appears exactly once in the source of truth and billing.
+- Sequence: v1 commits, v2 times out, request terminates before the retry log becomes durable; the plan's in-handler retry never runs.
+- Consequence: permanent v1/v2 divergence with no recovery path; acknowledged write lost in billing projection.
+- Fix: make the retry durable (outbox/job) before acknowledging, or treat v2 failure as request failure with compensating v1 rollback.
+- Test: crash the process between v1 commit and v2 commit; assert the mutation converges to v2 within 30 minutes.
+
+**B3 — Read safety (INV-5)**
+- Invariant: after source-of-truth switch, no read returns stale-generation cache.
+- Sequence: key `amber:88` holds v1 value; flush is async and its invalidation arrives after the first v2 read repopulates the same non-generation keyed entry, resurrecting v1.
+- Consequence: reader cutover serves pre-migration data silently (INV-5 violation), defeating canary.
+- Fix: include a generation/source token in the cache key and use "delete-then-repopulate" idempotent invalidation, or versioned keys.
+- Test: repopulate `amber:88` from v2, then deliver delayed invalidation; assert subsequent reads still return v2.
+
+**B4 — Rollback (INV-4)**
+- Invariant: within 72h, rollback must preserve every acknowledged write without a later repair.
+- Sequence: object 991 created v2-only (discount alloc-7, no v1 representation); rollback flips reader to v1, leaving 991 invisible, deferred to "a later repair job."
+- Consequence: acknowledged v2-only data unavailable/disappears for the rollback window → fails rollback guarantee.
+- Fix: synchronously copy v2-only objects (lossy-mapped or quarantined) to v1 before cutover, or block rollback until v2-only data is back-propagated, or forbid v2-only creation until backfill repairs exist.
+- Test: create v2-only object, trigger rollback, assert object 991 readable within the 60s pause and 72h retained.
+
+**B5 — Tenant isolation/worker-v1 30-min tail (INV-1, INV-2)**
+- Invariant: no queued event may affect a different generation; read safety holds during legacy tail.
+- Sequence: protocol-v1 worker (ignores schema_epoch) remains alive up to 30 min after cutover and emits `cancel` (m-old-1) for a tenant already switched to v2 where a newer `reserve` (schema_epoch 2) exists.
+- Consequence: legacy+v2 events interleave on a non-generation keyed queue; staleness overwrites or double-counts → cross-generation corruption.
+- Fix: withhold same-object handling by generation (gate v1 workers out at cutover via epoch/lease) or separate queue partitions per generation and drop/modify stale epochs deterministically.
+- Test: run 30-min v1 tail against tenant amber post-cutover; assert only newest-generation event lands in billing, exactly once.
+
+# Evidence
+- Architecture: v1 per-customer schemas vs shared tables; no cross-DB/queue transaction; Redis keys lack generation; v2 audit/discount not lossless in v1; new objects v2-only.
+- Proposal: unconditional upserts; in-handler retry; row-count-only validation; flush-then-cutover; rollback via flag + later repair.
+- Constraints: INV-1..5, 60s pause, fault-injection (not row-count) required for canary.
+- Records: race_snapshot (v10/v11), partial_write (v1 ok/v2 timeout), cache late invalidation, rollback v2-only object 991, mixed producers.
+
+# Non-blocking concerns
+- Hourly row-count comparison is too coarse and not a correctness signal (no doubling of writes, no version checks).
+- Three in-handler retry attempts are arbitrary and still non-durable (subsumed by B2).
+- Flushing only before cutover ignores writes landing between flush and flag flip.
+
+# Approval tests
+- Deterministic fault injection: crash mid-dual-write (B2), delayed cache invalidation (B3), backfill/dual-write interleave (B1), 30-min v1 worker tail (B5), v2-only object rollback (B4).
+- Per-tenant canary must pass all five with no other-tenant or cross-generation side effects, and a ≤60s observed pause.
+
+# Residual unknowns
+- Exact ordering semantics of the shared queue (FIFO vs per-tenant) is not specified.
+- Whether billing consumer deduplicates by message_id/epoch is unspecified.
+- Whether Redis invalidation is delete vs overwrite is not stated (I inferred flush→delete hazard from "flush existing keys").

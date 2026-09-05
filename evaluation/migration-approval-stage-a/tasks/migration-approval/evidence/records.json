@@ -1,0 +1,27 @@
+{
+  "queued_messages": [
+    {"message_id":"m-old-1","tenant_id":"amber","object_id":88,"operation":"cancel","schema_epoch":null,"producer":"worker-v1"},
+    {"message_id":"m-new-1","tenant_id":"amber","object_id":88,"operation":"reserve","schema_epoch":2,"producer":"api-v2"}
+  ],
+  "race_snapshot": {
+    "backfill_read":{"tenant_id":"amber","object_id":88,"version":10,"status":"pending"},
+    "dual_write":{"tenant_id":"amber","object_id":88,"version":11,"status":"cancelled"},
+    "backfill_upsert_order":"after dual_write"
+  },
+  "partial_write": {
+    "v1_commit":"success",
+    "v2_commit":"timeout",
+    "request_process":"terminated before retry log was durable"
+  },
+  "cache": {
+    "key":"amber:88",
+    "value_source":"v1",
+    "invalidation_delivery":"may arrive after the first v2 read repopulates the same key"
+  },
+  "rollback_example": {
+    "object_id":991,
+    "created_in":"v2 only",
+    "discount_allocation":"alloc-7",
+    "v1_representation":null
+  }
+}

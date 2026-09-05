@@ -1,0 +1,41 @@
+**Decision**: Reject.
+
+**Blockers**
+
+**B1** — Invariant: INV-3 Monotonicity.
+Sequence: Backfill's repeatable-read v1 snapshot reads object 88 as version 10 "pending"; the dual-write commits version 11 "cancelled"; the backfill's unconditional upsert then writes version 10 over version 11.
+Consequence: The acknowledged version-11 write is silently reverted; v2 source of truth and billing projection diverge from v1.
+Fix: Version-conditional upserts (apply only if incoming version ≥ stored, else insert-if-absent), fencing backfill by logical version.
+Test: Force the v10/v11 race deterministically; assert version 11 survives in v2.
+
+**B2** — Invariant: INV-2 Convergence.
+Sequence: v1 commit succeeds, v2 commit times out, and the process terminates before the retry log is durable; the three in-handler retries never execute.
+Consequence: An acknowledged mutation exists only in v1; after cutover it is missing from v2 and its billing projection.
+Fix: Durable outbox/relay with idempotent, exactly-once replay so every acknowledged write eventually reaches v2.
+Test: Kill the process between the v1 and v2 commits; verify the mutation converges to v2 exactly once.
+
+**B3** — Invariant: INV-3 (also INV-1/INV-2) Monotonicity across generations.
+Sequence: Legacy worker-v1 emits an epoch-null "cancel"; api-v2 emits an epoch-2 "reserve" for the same object; the epoch-null cancel is applied after the reserve.
+Consequence: A stale legacy operation overwrites newer v2 state; billing and source of truth diverge.
+Fix: Epoch fencing — drop/park queue events with schema_epoch null (or below the tenant's cutover epoch) after cutover, or version-check before apply.
+Test: Replay the epoch-null cancel after the epoch-2 reserve; verify it is fenced and the reserve survives.
+
+**B4** — Invariant: INV-5 Read safety.
+Sequence: Key "amber:88" holds a v1 value; the flush runs before cutover, but asynchronous invalidation delivery lands after the first v2 read repopulates the same key.
+Consequence: A successful post-cutover read returns v1-generation data, or a fresh v2 entry is evicted — stale/cross-generation data served to users.
+Fix: Generation-qualified keys (e.g., "v2:amber:88") or epoch-tagged values so pre-cutover entries are unaddressable after switch.
+Test: Delay invalidation past the first v2 read; verify no v1 value is ever returned post-cutover.
+
+**B5** — Invariant: INV-4 Rollback.
+Sequence: Object 991 is created v2-only (discount allocation "alloc-7", no v1 representation); rollback at hour 1 or 71 switches the reader to v1; the "later repair job" is unbounded.
+Consequence: An acknowledged write is unavailable for up to 72 hours — not lossless within the 60-second pause.
+Fix: Suspend v2-only creation per tenant during the window, or provide a lossless v1 sidecar with synchronous copy-back at rollback within the pause.
+Test: Create v2-only state, roll back at 1h and 71h; verify lossless availability within 60 seconds.
+
+**Evidence**: records.json: race_snapshot → B1; partial_write → B2; queued_messages (epoch-null cancel vs epoch-2 reserve) → B3; cache.invalidation_delivery → B4; rollback_example → B5. architecture.txt confirms no cross-DB/queue transaction, v1 workers ignore schema_epoch for 30 min, and v2-only fields are lossy.
+
+**Non-blocking concerns**: Hourly aggregate row-count gating (step 3) is insufficient — counts can match while values diverge; replace with deterministic fault injection per constraints. The 24-hour dual-write retention and hourly shadow compare are tuning issues, not independent blockers.
+
+**Approval tests**: The five tests above, plus: replay duplicate v1/v2 billing events and verify a single projection (INV-2 billing).
+
+**Residual unknowns**: Whether billing deduplicates by tenant/object/version/generation; queue ordering, visibility, and outbox-lag guarantees; whether v2-only creation can be suspended per tenant; Redis flush scoping across tenants; how the 30-minute legacy-worker overlap interacts with the 60-second pause budget.
