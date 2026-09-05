@@ -1,0 +1,68 @@
+## Verdict
+
+The patch is unsafe. Two independent defects — a tenant-blind cache key and tombstone-less invalidation — permit cross-tenant permission leakage and resurrection of revoked permissions. Do not ship as-is.
+
+## Suspects
+
+1. **Tenant-blind cache key.** `_key()` returns only `user_id`, but the store keys rows by `(tenant_id, user_id)`. Two tenants sharing a `user_id` share one cache entry, so `get_or_refresh` serves one tenant's permissions to the other.
+
+2. **Delete-only invalidation lets a stale refresh resurrect permissions (warm cache).** `invalidate()` just deletes the entry; it records no generation watermark. A refresh that captured an old snapshot before revocation then runs `refresh_from_snapshot` after deletion: `current is None`, so the `generation > snapshot.generation` guard is skipped and the stale snapshot is re-written.
+
+3. **Same defect, cold-cache interleaving.** If invalidation arrives while the entry is absent (`current is None`), `invalidate()` is a no-op. A subsequent refresh with the pre-revocation snapshot then populates revoked permissions, because no tombstone survived.
+
+## Evidence
+
+- `repo/auth_store.py`: rows keyed by `(tenant_id, user_id)`; generations are per-row.
+- `repo/auth_cache.py`: `_key` returns `user_id`; `invalidate` only deletes; `refresh_from_snapshot` compares generations only against a *live* entry.
+- `evidence/pr.txt`: user IDs unique only within a tenant; invalidation delivered at least once, may arrive out of order; "a late refresh that began earlier must not restore permissions."
+- `evidence/trace.log`: `refresh_start` gen 7 → `store_update` gen 8 → `invalidation` gen 8 deletes → `refresh_resume` gen 7 `result=written` → `authorization admin result=allowed`. Direct evidence for Suspect 2.
+
+## Counterexample tests
+
+```python file=repo/test_candidate.py
+import unittest
+
+from auth_cache import PermissionCache
+from auth_store import PermissionStore
+
+
+class CandidateTests(unittest.TestCase):
+    def test_cross_tenant_same_user_id_is_isolated(self):
+        store = PermissionStore()
+        store.set_permissions("tenant-a", "user-a", {"admin"})
+        store.set_permissions("tenant-b", "user-a", {"read"})
+        cache = PermissionCache(store)
+        self.assertEqual(cache.get_or_refresh("tenant-a", "user-a"), {"admin"})
+        self.assertEqual(cache.get_or_refresh("tenant-b", "user-a"), {"read"})
+
+    def test_late_stale_refresh_does_not_resurrect_admin(self):
+        store = PermissionStore()
+        stale = store.set_permissions("tenant-a", "user-a", {"read", "admin"})
+        cache = PermissionCache(store)
+        cache.get_or_refresh("tenant-a", "user-a")
+        revoked = store.set_permissions("tenant-a", "user-a", {"read"})
+        cache.invalidate("tenant-a", "user-a", revoked.generation)
+        cache.refresh_from_snapshot("tenant-a", "user-a", stale)
+        self.assertEqual(cache.get_or_refresh("tenant-a", "user-a"), {"read"})
+
+    def test_cold_cache_invalidation_blocks_stale_refresh(self):
+        store = PermissionStore()
+        stale = store.set_permissions("tenant-a", "user-a", {"read", "admin"})
+        cache = PermissionCache(store)
+        revoked = store.set_permissions("tenant-a", "user-a", {"read"})
+        cache.invalidate("tenant-a", "user-a", revoked.generation)
+        cache.refresh_from_snapshot("tenant-a", "user-a", stale)
+        self.assertEqual(cache.get_or_refresh("tenant-a", "user-a"), {"read"})
+```
+
+## Expected failures
+
+- **Test 1** — Patch: `_key` collides, so `get_or_refresh("tenant-b","user-a")` returns the cached `{"admin"}`; `assertEqual({"admin"}, {"read"})` fails. Oracle (tenant-scoped key): returns `{"read"}`, passes.
+- **Test 2** — Patch: `invalidate` deletes the entry, then `refresh_from_snapshot(stale)` sees `current is None` and re-writes gen-1 `{"read","admin"}`; final `assertEqual` sees `admin`, fails. Oracle (watermark blocks gen ≤ revoked): entry stays empty, re-read yields `{"read"}`, passes.
+- **Test 3** — Patch: cold `invalidate` is a no-op, stale refresh writes `{"read","admin"}`; assertion fails. Oracle (watermark recorded even when cold): stale refresh rejected, yields `{"read"}`, passes.
+
+## Residual uncertainty
+
+- The oracle's exact tombstone/watermark mechanics are unknown; Test 3 assumes the oracle records a generation floor even on cold-cache invalidation, which is the lower-confidence test of the three.
+- Equal-generation handling in `refresh_from_snapshot`/`invalidate` is not exercised and appears harmless.
+- These synchronous calls *simulate* the trace's interleaving; they do not execute true concurrent snapshot/invalidation races.

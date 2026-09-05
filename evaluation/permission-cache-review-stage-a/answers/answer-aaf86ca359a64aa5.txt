@@ -1,0 +1,75 @@
+## Verdict
+
+Unsound. Two independent defects: (1) `_key` drops `tenant_id`, so distinct tenants sharing a `user_id` collide on one cache entry; (2) a refresh that reads a snapshot before a revocation and writes after `invalidate` restores the revoked permissions (the exact interleaving in the trace). A third, related manifestation is that `invalidate`/`refresh_from_snapshot` evaluate generation guards against a tenant-agnostic entry.
+
+## Suspects
+
+1. **`_key` returns `user_id` only** (auth_cache.py:8-9). With user IDs unique only per tenant (pr.txt), tenants `tenant-a` and `tenant-b` both key to `"42"`, leaking permissions across tenants.
+
+2. **TOCTOU stale refresh** (`get_or_refresh` read→`refresh_from_snapshot` write window). If a snapshot (gen 7) is read, then the store advances (gen 8) and `invalidate(gen 8)` fires, the late `refresh_from_snapshot(gen 7)` finds `current is None` and writes the stale snapshot back. No high-water mark or store-generation check exists.
+
+3. **Generation guards are evaluated on a tenant-agnostic entry.** `invalidate`'s `current.generation <= generation` and `refresh_from_snapshot`'s `>` compare another tenant's generation, so one tenant's invalidation can be blocked by (or delete) another tenant's entry.
+
+## Evidence
+
+- auth_cache.py:9 `return user_id` vs pr.txt "User IDs are unique only within a tenant."
+- trace.log lines 1-6: eu/amber reads gen 7 `read,admin`; store updates to gen 8 `read`; invalidation gen 8 deletes; `refresh_resume snapshot_generation=7 result=written`; then `permission=admin result=allowed`. This is a live record of suspect 2 restoring a revoked permission.
+- trace.log line 2 shows tenant `blue` filling the shared key before amber's invalidation, corroborating suspect 1/3 cross-tenant interaction.
+
+## Counterexample tests
+
+```python file=repo/test_candidate.py
+import unittest
+
+from auth_cache import PermissionCache
+from auth_store import PermissionStore
+
+
+class CandidateCounterexamples(unittest.TestCase):
+    def test_same_user_id_in_two_tenants_does_not_leak(self):
+        store = PermissionStore()
+        store.set_permissions("tenant-a", "42", {"read"})
+        store.set_permissions("tenant-b", "42", {"admin"})
+        cache = PermissionCache(store)
+        self.assertEqual(cache.get_or_refresh("tenant-a", "42"), {"read"})
+        self.assertEqual(cache.get_or_refresh("tenant-b", "42"), {"admin"})
+
+    def test_late_refresh_does_not_restore_revoked_permission(self):
+        store = PermissionStore()
+        store.set_permissions("t", "u", {"read", "admin"})
+        stale = store.snapshot("t", "u")                       # generation 1, read in flight
+        revoked = store.set_permissions("t", "u", {"read"})    # generation 2
+        cache = PermissionCache(store)
+        cache.invalidate("t", "u", revoked.generation)         # processed before late write
+        cache.refresh_from_snapshot("t", "u", stale)           # late write of generation 1
+        self.assertEqual(cache.get_or_refresh("t", "u"), {"read"})
+
+    def test_invalidation_not_blocked_by_other_tenants_entry(self):
+        store = PermissionStore()
+        store.set_permissions("tenant-a", "42", {"read"})
+        store.set_permissions("tenant-a", "42", {"read", "x"})
+        store.set_permissions("tenant-a", "42", {"read", "x", "y"})    # generation 3
+        store.set_permissions("tenant-b", "42", {"read", "write"})     # generation 1
+        cache = PermissionCache(store)
+        self.assertEqual(cache.get_or_refresh("tenant-a", "42"), {"read", "x", "y"})
+        revoked = store.set_permissions("tenant-b", "42", {"read"})    # generation 2
+        cache.invalidate("tenant-b", "42", revoked.generation)
+        self.assertEqual(cache.get_or_refresh("tenant-b", "42"), {"read"})
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## Expected failures
+
+On the supplied patch:
+- **test_same_user_id_in_two_tenants_does_not_leak**: final `assertEqual` fails; `get_or_refresh("tenant-b","42")` returns `{"read"}` (tenant-a's cached entry) because both tenants key to `"42"`.
+- **test_late_refresh_does_not_restore_revoked_permission**: final `assertEqual` fails; returns `{"read","admin"}`. `invalidate` finds no entry (no-op), then `refresh_from_snapshot(stale)` writes generation 1 because `current is None`, so `get_or_refresh` serves the stale snapshot.
+- **test_invalidation_not_blocked_by_other_tenants_entry**: final `assertEqual` fails; returns `{"read","x","y"}`. `invalidate` compares tenant-a's cached generation 3 against generation 2 (`3 <= 2` false), so the entry survives and is served to tenant-b.
+
+On the corrected oracle these pass: a tenant-scoped key isolates the entries in tests 1 and 3, and the late refresh (test 2) is refused, so re-reads yield the revoked `{"read"}`.
+
+## Residual uncertainty
+
+The oracle's exact fix is hidden; the counterexamples rely on the stated invariants (tenant scoping; a late pre-revocation refresh must not restore permissions). Suspects 1 and 3 share the tenant-key root cause but exercise distinct code paths (`get_or_refresh` vs `invalidate`); keeping both is optional if only the read-path leak is wanted. The store is synchronous, so the trace's race is reproduced by ordered calls rather than true threading; behavior under genuine concurrency is inferred, not directly tested.

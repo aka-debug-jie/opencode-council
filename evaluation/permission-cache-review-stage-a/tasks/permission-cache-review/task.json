@@ -1,0 +1,33 @@
+{
+  "id": "permission-cache-review",
+  "version": "0.1",
+  "kind": "technical",
+  "prompt": "Red-team the supplied permission-cache patch. The patch passes all public tests and appears to fix stale permissions after invalidation. Do not rewrite the implementation. Select at most three distinct high-value suspects, explain the interleaving for each, and submit minimal executable counterexample tests against the current patch. A useful counterexample must fail by assertion on the supplied patch and pass on the hidden corrected oracle; syntax/import errors, unconditional failures, and tests that also fail on the oracle do not count. Final answer must use exactly these ordered sections: Verdict, Suspects, Evidence, Counterexample tests, Expected failures, Residual uncertainty. Under Counterexample tests include exactly one fenced block beginning ```python file=repo/test_candidate.py containing one to three unittest test methods. Use only supplied files; do not browse, edit, or inspect unrelated files. Keep prose under 500 English words, excluding code.",
+  "materials": [
+    {
+      "id": "store",
+      "title": "Authoritative permission store",
+      "file": "repo/auth_store.py"
+    },
+    {
+      "id": "patch",
+      "title": "Permission cache patch under review",
+      "file": "repo/auth_cache.py"
+    },
+    {
+      "id": "public-tests",
+      "title": "Passing public patch tests",
+      "file": "repo/test_public.py"
+    },
+    {
+      "id": "pr-description",
+      "title": "Patch description and deployment context",
+      "file": "evidence/pr.txt"
+    },
+    {
+      "id": "invalidation-trace",
+      "title": "Sanitized invalidation trace",
+      "file": "evidence/trace.log"
+    }
+  ]
+}
